@@ -8,13 +8,36 @@ import { materialUrl } from '../api'
 /** Split YAML frontmatter off. Returns { body, meta, offset } where offset = lines removed. */
 export function splitFrontmatter(src = '') {
   const m = src.match(/^---\n([\s\S]*?)\n---\n?/)
-  if (!m) return { body: src, meta: {}, offset: 0 }
+  if (!m) return { body: src, meta: {}, props: [], offset: 0 }
   const meta = {}
+  const props = []
+  let cur = null
   m[1].split('\n').forEach((l) => {
     const mm = l.match(/^([\w-]+):\s*(.*)$/)
-    if (mm && mm[2]) meta[mm[1]] = mm[2]
+    if (mm) { cur = { k: mm[1], v: mm[2] ? [mm[2].replace(/^["']|["']$/g, '')] : [] }; props.push(cur); if (mm[2]) meta[mm[1]] = mm[2] }
+    else if (cur && l.trim().startsWith('-')) cur.v.push(l.trim().slice(1).trim().replace(/^["']|["']$/g, ''))
   })
-  return { body: src.slice(m[0].length), meta, offset: m[0].split('\n').length - 1 }
+  return { body: src.slice(m[0].length), meta, props, offset: m[0].split('\n').length - 1 }
+}
+
+/** Obsidian-style Properties block for reading view. */
+export function Properties({ props }) {
+  if (!props?.length) return null
+  return (
+    <div className="props">
+      {props.map((p) => (
+        <div key={p.k} className="prop">
+          <span className="k">{p.k}</span>
+          <span className="v">
+            {p.v.length === 0 && <span className="muted">Empty</span>}
+            {(p.k === 'tags' || p.k === 'aliases' || p.v.length > 1)
+              ? p.v.map((x) => <span key={x} className="pill">{x}</span>)
+              : p.v.map((x) => <span key={x}>{x}</span>)}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 /** Obsidian-flavoured preprocessing that keeps line numbers stable. */
@@ -27,7 +50,18 @@ function preprocess(src) {
       return `[${text}](wiki:${encodeURIComponent(page || '')})`
     })
     .replace(/[ \t]\^[\w-]+$/gm, '')
-    .replace(/^> \[!(\w+)\][ \t]*(.*)$/gm, (_, kind, title) => `> **${title || kind}**`)
+    .replace(/^> \[!(\w+)\][-+]?[ \t]*(.*)$/gm, (_, kind, title) => `> **${title || kind[0].toUpperCase() + kind.slice(1)}**`)
+}
+
+function tagify(src) {
+  return src.split(/(```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$)/).map((part, i) => (i % 2 ? part : part.replace(
+    /(^|[\s(])#([\p{L}_\-/][\p{L}\p{N}_\-/]*)/gmu,
+    (all, pre, tag, off, str) => {
+      const lineStart = str.lastIndexOf('\n', off) + 1
+      if (off + pre.length === lineStart && /^#{1,6}\s/.test(str.slice(lineStart))) return all
+      return `${pre}[#${tag}](tag:${tag})`
+    },
+  ))).join('')
 }
 
 export default function Markdown({ source, onToggle, onWikiLink, taskAction, lineOffset = 0, className = '' }) {
@@ -41,6 +75,7 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
           </a>
         )
       }
+      if (href.startsWith('tag:')) return <span className="md-tag">{children}</span>
       if (href.startsWith('file://')) {
         return <a href={materialUrl(href)} target="_blank" rel="noreferrer" className="material-link" title="Open the file">{children}</a>
       }
@@ -83,7 +118,7 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
         urlTransform={(u) => u}
         components={components}
       >
-        {preprocess(source || '')}
+        {tagify(preprocess(source || ''))}
       </ReactMarkdown>
     </div>
   )

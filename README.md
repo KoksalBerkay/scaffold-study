@@ -23,6 +23,7 @@
 | 🔍 **Reviewer** | A second agent checks every tutor reply for correctness, completeness and answer-giving *before* you see it. |
 | 🧠 **Personal memory** | Criticise the teaching ("you skipped why this works") and it becomes a lasting rule for **you**. |
 | 📝 **Auto-notes** | Clean, exam-ready notes in the right course folder. Obsidian-compatible, with LaTeX math. |
+| ✍️ **Live-preview editor** | Edit notes like in Obsidian: formatting, math, tables, callouts, properties and tags render in place, and raw markdown appears only on the line you're editing. Autosaves. |
 | 🔌 **Any model** | ChatGPT subscription (Codex CLI), Claude subscription (Claude Code CLI), OpenAI API key, Anthropic API key. Pick a model per agent in the UI. |
 | 🎛️ **You're in control** | Every system prompt and the memory are editable in Settings. |
 

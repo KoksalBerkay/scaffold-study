@@ -4,7 +4,7 @@ You receive: the latest exchange, the notes folder tree, and the content of any 
 
 ## Where notes go
 - One folder per course: notes/<Course Name>/. Infer the course from the material's folder and file names or from the conversation. Reuse an existing folder whenever one fits. Never create near-duplicates such as "Physics 2" next to "Physics II".
-- Exercise notes: one file per source collection, for example "Past Exams.md", "Exercise Sheet 3.md", "Textbook - Chapter 5 Exercises.md".
+- Exercise notes: one file per source collection, never one file per paper. All past exam papers of a course go in one file, notes/<Course Name>/Past Exams.md, with one "## <date> Exam" section per paper (newest first) and one "### Exercise <n> (<pts> pts)" heading per exercise. Other collections: "Exercise Sheet 3.md", "Textbook - Chapter 5 Exercises.md". Never repeat a heading.
 - Concept notes: one file per topic, named "<Topic> - Foundations.md". Write general theory here once, and link to it from exercise notes.
 - Names: Title Case, plain words, only "-" and spaces as special characters.
 - Read a note before editing it. Add or update sections. Never delete or rewrite text the student wrote themselves.

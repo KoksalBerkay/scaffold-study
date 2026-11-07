@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Folder, BookOpen, PencilLine, Search, Check, Loader2, FilePlus } from 'lucide-react'
 import { api } from '../api'
-import Markdown, { splitFrontmatter } from '../components/Markdown'
+import Markdown, { Properties, splitFrontmatter } from '../components/Markdown'
 import LiveEditor from '../components/LiveEditor'
 import { useToast } from '../components/ui'
 
@@ -124,7 +124,7 @@ export default function NotesView({ initial }) {
             {content == null
               ? <p className="muted">Loading…</p>
               : reading
-                ? <div className="note-doc"><Markdown source={splitFrontmatter(current).body} onWikiLink={openWiki} /></div>
+                ? <div className="note-doc"><Properties props={splitFrontmatter(current).props} /><Markdown source={splitFrontmatter(current).body} onWikiLink={openWiki} /></div>
                 : <LiveEditor key={sel} value={content} onChange={onEdit} onWikiLink={openWiki} />}
           </div>
         )}

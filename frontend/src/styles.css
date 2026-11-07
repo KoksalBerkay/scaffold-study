@@ -526,3 +526,9 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .live-editor .lp-prop .empty { color: var(--muted); opacity: 0.6; }
 .live-editor .lp-tag { background: var(--accent-soft); color: var(--accent); padding: 1px 7px; border-radius: 999px; font-size: 0.88em; }
 .md .md-tag { background: var(--accent-soft); color: var(--accent); padding: 1px 7px; border-radius: 999px; font-size: 0.88em; }
+
+.props { padding: 8px 4px 10px; border-bottom: 1px solid var(--border); margin-bottom: 16px; font-size: 13px; }
+.props .prop { display: flex; gap: 12px; align-items: center; padding: 4px 6px; }
+.props .k { width: 150px; color: var(--muted); flex: none; }
+.props .v { display: flex; flex-wrap: wrap; gap: 4px; }
+.props .pill { background: var(--accent-soft); color: var(--accent); padding: 1px 9px; border-radius: 999px; font-size: 12.5px; }
