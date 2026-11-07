@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import llm, materials
-from .config import WORKSPACE, get_memory, load_settings, materials_dir, memory_path, notes_dir, render_prompt
+from .config import WORKSPACE, read_json, write_atomic, get_memory, load_settings, materials_dir, memory_path, notes_dir, render_prompt
 from .files import normalize_math, notes_tree, note_target, parse_file_blocks, write_note
 from .planner import PLAN_DIR, plan_file, today_str, with_heartbeat
 
@@ -68,7 +68,10 @@ def load_meta(cid: str) -> dict:
     p = chat_dir(cid) / "meta.json"
     if not p.exists():
         raise HTTPException(404, "Chat not found")
-    return json.loads(p.read_text())
+    data = read_json(p)
+    if data is None:
+        raise HTTPException(503, "This chat is being saved. Try again in a moment.")
+    return data
 
 
 def save_meta(meta: dict, create: bool = False):
@@ -77,14 +80,21 @@ def save_meta(meta: dict, create: bool = False):
         raise ChatGone()
     d.mkdir(parents=True, exist_ok=True)
     meta["updated"] = time.time()
-    (d / "meta.json").write_text(json.dumps(meta, indent=2))
+    write_atomic(d / "meta.json", json.dumps(meta, indent=2))
 
 
 def load_messages(cid: str) -> list[dict]:
     p = chat_dir(cid) / "transcript.jsonl"
     if not p.exists():
         return []
-    return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
+    out = []
+    for line in p.read_text().splitlines():
+        if line.strip():
+            try:
+                out.append(json.loads(line))
+            except Exception:
+                pass  # a partially written last line: ignore it
+    return out
 
 
 class ChatGone(Exception):
@@ -109,17 +119,13 @@ TEST_FOLDER = "Reviewer tests"
 
 
 def load_folders() -> list[dict]:
-    if FOLDERS_FILE.exists():
-        try:
-            return json.loads(FOLDERS_FILE.read_text())
-        except Exception:
-            return []
-    return []
+    data = read_json(FOLDERS_FILE, [])
+    return data if isinstance(data, list) else []
 
 
 def save_folders(folders: list[dict]):
     CHATS.mkdir(parents=True, exist_ok=True)
-    FOLDERS_FILE.write_text(json.dumps(folders, indent=2))
+    write_atomic(FOLDERS_FILE, json.dumps(folders, indent=2))
 
 
 def ensure_folder(name: str) -> str:
@@ -148,12 +154,14 @@ def list_chats():
             m = d / "meta.json"
             if not m.exists():
                 continue
-            meta = json.loads(m.read_text())
+            meta = read_json(m)
+            if not isinstance(meta, dict):
+                continue  # half-written or damaged: skip instead of crashing the list
             if meta.get("harness") and not meta.get("folder"):
                 # show test conversations in their own folder, with readable titles
                 meta["folder"] = ensure_folder(TEST_FOLDER)
                 meta["title"] = _harness_title(meta)
-                (d / "meta.json").write_text(json.dumps(meta, indent=2))
+                write_atomic(d / "meta.json", json.dumps(meta, indent=2))
             out.append({k: meta.get(k) for k in ("id", "title", "updated", "created", "task", "folder", "harness", "badge")})
     return sorted(out, key=lambda x: -(x["updated"] or 0))
 
@@ -192,10 +200,10 @@ def delete_folder(fid: str):
         for d in CHATS.iterdir():
             m = d / "meta.json"
             if m.exists():
-                meta = json.loads(m.read_text())
-                if meta.get("folder") == fid:
+                meta = read_json(m)
+                if isinstance(meta, dict) and meta.get("folder") == fid:
                     meta["folder"] = None
-                    m.write_text(json.dumps(meta, indent=2))
+                    write_atomic(m, json.dumps(meta, indent=2))
     return {"ok": True}
 
 
@@ -226,7 +234,7 @@ def rename_chat(cid: str, body: dict = Body(...)):
         fid = body.get("folder")
         meta["folder"] = fid if fid in {f["id"] for f in load_folders()} else None
     p = chat_dir(cid) / "meta.json"
-    p.write_text(json.dumps(meta, indent=2))  # moving/renaming must not reorder by "updated"
+    write_atomic(p, json.dumps(meta, indent=2))  # moving/renaming must not reorder by "updated"
     return meta
 
 
@@ -254,7 +262,7 @@ async def upload(file: UploadFile = File(...)):
     uid = uuid.uuid4().hex[:16]
     p = UPLOADS / f"{uid}{ext}"
     p.write_bytes(await file.read())
-    (UPLOADS / f"{uid}.json").write_text(json.dumps({"name": name, "file": p.name}))
+    write_atomic(UPLOADS / f"{uid}.json", json.dumps({"name": name, "file": p.name}))
     return _upload_record(uid, name, p)
 
 
@@ -264,7 +272,9 @@ def upload_path(uid: str) -> tuple[Path, str]:
     meta = UPLOADS / f"{uid}.json"
     if not meta.exists():
         raise HTTPException(404)
-    m = json.loads(meta.read_text())
+    m = read_json(meta)
+    if not isinstance(m, dict):
+        raise HTTPException(404)
     return UPLOADS / m["file"], m["name"]
 
 
@@ -288,7 +298,7 @@ def attach_material_page(body: dict = Body(...)):
     dst = UPLOADS / f"{uid}.png"
     shutil.copy(img, dst)
     name = f"{src.name} · p.{page}"
-    (UPLOADS / f"{uid}.json").write_text(json.dumps({"name": name, "file": dst.name}))
+    write_atomic(UPLOADS / f"{uid}.json", json.dumps({"name": name, "file": dst.name}))
     return _upload_record(uid, name, dst)
 
 
@@ -396,6 +406,16 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list
 
     if root and user_text.strip():
         hits = materials.search(root, user_text, k=4)
+        pinned_rel = {_rel(root, l) for l in meta.get("pinned_files") or []}
+        if hits and hits[0]["file"] not in pinned_rel:
+            # the student usually names one paper ("the 2 July exam"): give the tutor that whole file, not only snippets
+            best = hits[0]["file"]
+            full = materials.read_pages(root / best, None, max_chars=9000)
+            if full.strip():
+                block = f"## Best-matching material (full text): {best}\n{full}"
+                parts.append(block)
+                material_used.append(block)
+                found.append(f"Opened {Path(best).name} (best match for your message)")
         if hits:
             found.append("Found matching pages: " + ", ".join(f"{Path(h['file']).name} p.{h['page']}" for h in hits))
             block = "## Material pages that match the student's message\n" + "\n\n".join(

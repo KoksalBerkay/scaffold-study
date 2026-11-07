@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .config import notes_dir
+from .config import notes_dir, write_atomic
 
 FILE_BLOCK = re.compile(r"<<<FILE\s+(.+?)\s*\n(.*?)(?:\nFILE>>>|(?=\n<<<FILE)|\Z)", re.S)
 
@@ -46,8 +46,7 @@ def note_target(rel: str) -> Path:
 
 def write_note(rel: str, content: str) -> Path:
     p = note_target(rel)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(normalize_math(content))
+    write_atomic(p, normalize_math(content))
     return p
 
 

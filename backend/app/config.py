@@ -39,6 +39,23 @@ DEFAULT_SETTINGS = {
 _lock = threading.Lock()
 
 
+def write_atomic(path: Path, text: str):
+    """Write a file so readers never see it half-written (temp file + rename)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)
+
+
+def read_json(path: Path, default=None):
+    """Read JSON, returning `default` if the file is missing or unreadable."""
+    try:
+        return json.loads(Path(path).read_text())
+    except Exception:
+        return default
+
+
 def _deep_merge(base: dict, extra: dict) -> dict:
     out = copy.deepcopy(base)
     for k, v in (extra or {}).items():
@@ -68,7 +85,7 @@ def save_settings(s: dict) -> dict:
     with _lock:
         WORKSPACE.mkdir(parents=True, exist_ok=True)
         merged = _deep_merge(DEFAULT_SETTINGS, s)
-        settings_path().write_text(json.dumps(merged, indent=2))
+        write_atomic(settings_path(), json.dumps(merged, indent=2))
         return merged
 
 
