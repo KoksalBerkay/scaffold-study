@@ -734,3 +734,7 @@ a.btn { text-decoration: none; }
 .md.inline-md .katex-display > .katex { display: inline; }
 .review-badge .md.inline-md { color: inherit; }
 .activity.live .act:last-child .act-body > .inline-md::after { content: '…'; animation: blink 1.2s infinite; }
+/* chats inside a folder: deeper indent + a subtle guide line */
+.folder .chat-item.nested { margin-left: 18px; border-left: 1px solid var(--border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+.folder .chat-item.nested .chat-link { padding-left: 14px; }
+.folder-empty { padding-left: 34px; }
