@@ -22,8 +22,16 @@ if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then (cd frontend && npx vite bui
 cd backend
 if [ "$APP" = 1 ]; then
   echo "Opening the Scaffold app…"
-  # a link named "Scaffold" makes the OS show the app name instead of "python3.12"
-  [ -e .venv/bin/Scaffold ] || ln -s python .venv/bin/Scaffold
+  # A copy of the interpreter named "Scaffold" makes macOS show "Scaffold" in the Dock instead of "python3.12".
+  # (A symlink is not enough: macOS uses the real file name. The venv's pyvenv.cfg keeps the copy working.)
+  REAL_PY="$(.venv/bin/python -c 'import os,sys; print(os.path.realpath(sys.executable))')"
+  if [ ! -x .venv/bin/Scaffold ] || [ -L .venv/bin/Scaffold ] || ! cmp -s "$REAL_PY" .venv/bin/Scaffold; then
+    rm -f .venv/bin/Scaffold && cp "$REAL_PY" .venv/bin/Scaffold && chmod +x .venv/bin/Scaffold
+  fi
+  # the interpreter finds its shared library relative to itself (@executable_path/../lib)
+  for lib in "$(dirname "$REAL_PY")"/../lib/libpython*.dylib; do
+    [ -e "$lib" ] && [ ! -e ".venv/lib/$(basename "$lib")" ] && ln -s "$lib" ".venv/lib/$(basename "$lib")"
+  done
   exec .venv/bin/Scaffold desktop.py
 fi
 echo "Scaffold running at http://127.0.0.1:8765"

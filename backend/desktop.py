@@ -21,21 +21,35 @@ PORT = 8765
 ICON = Path(__file__).resolve().parents[1] / "assets" / "icon-1024.png"
 
 
+def _apply_branding():
+    from AppKit import NSApplication, NSImage
+    from Foundation import NSBundle, NSProcessInfo
+    info = NSBundle.mainBundle().infoDictionary()
+    info["CFBundleName"] = "Scaffold"
+    info["CFBundleDisplayName"] = "Scaffold"
+    NSProcessInfo.processInfo().setProcessName_("Scaffold")
+    if ICON.exists():
+        NSApplication.sharedApplication().setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(str(ICON)))
+
+
 def brand_macos_app():
-    """Show 'Scaffold' with its icon in the Dock, menu bar and app switcher instead of 'python3.12'."""
+    """Name + icon in the Dock/menu bar. Applied before and again after the window starts (pywebview resets it)."""
     if sys.platform != "darwin":
         return
     try:
-        from AppKit import NSApplication, NSImage
-        from Foundation import NSBundle, NSProcessInfo
-        info = NSBundle.mainBundle().infoDictionary()
-        info["CFBundleName"] = "Scaffold"
-        info["CFBundleDisplayName"] = "Scaffold"
-        NSProcessInfo.processInfo().setProcessName_("Scaffold")
-        app = NSApplication.sharedApplication()
-        if ICON.exists():
-            app.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(str(ICON)))
+        _apply_branding()
     except Exception as e:  # cosmetic only, never block startup
+        print("branding skipped:", e)
+
+
+def rebrand_after_start():
+    if sys.platform != "darwin":
+        return
+    try:
+        from PyObjCTools import AppHelper
+        time.sleep(0.3)
+        AppHelper.callAfter(_apply_branding)
+    except Exception as e:
         print("branding skipped:", e)
 
 
@@ -77,7 +91,7 @@ def main():
     storage = WORKSPACE / "webview"
     storage.mkdir(parents=True, exist_ok=True)
     # private_mode=False keeps localStorage (theme choice) between launches
-    webview.start(private_mode=False, storage_path=str(storage))
+    webview.start(rebrand_after_start, private_mode=False, storage_path=str(storage))
     if server:
         server.should_exit = True
 
