@@ -40,21 +40,97 @@ EFFORTS = ["low", "medium", "high"]
 
 
 def codex_models() -> list[dict]:
-    """Read the Codex CLI's own model cache so the UI shows real models and reasoning levels."""
+    """Models the user's ChatGPT subscription can use, read from the Codex CLI's own cache."""
     for f in sorted(Path.home().glob(".codex/*models*.json")):
         try:
             d = json.loads(f.read_text())
             ms = d.get("models", d) if isinstance(d, dict) else d
             out = []
-            for m in ms:
+            for m in sorted(ms, key=lambda m: m.get("priority", 99)):
                 slug = m.get("slug") or m.get("id")
-                if slug and "review" not in slug:
-                    out.append({"id": slug, "efforts": [e.get("effort") for e in m.get("supported_reasoning_levels", [])]})
+                if not slug or "review" in slug or m.get("visibility") not in (None, "list"):
+                    continue
+                levels = m.get("supported_reasoning_levels") or []
+                out.append({
+                    "id": slug, "label": m.get("display_name") or slug, "description": m.get("description") or "",
+                    "vision": "image" in (m.get("input_modalities") or ["image"]),
+                    "efforts": [e.get("effort") for e in levels if e.get("effort")],
+                    "effort_help": {e.get("effort"): e.get("description", "") for e in levels},
+                    "default_effort": m.get("default_reasoning_level") or "medium",
+                })
             if out:
                 return out
         except Exception:
             continue
     return []
+
+
+CLAUDE_CODE_MODELS = [
+    {"id": "opus", "label": "Opus (latest)", "description": "Most capable. Best for teaching and planning.", "vision": True},
+    {"id": "sonnet", "label": "Sonnet (latest)", "description": "Fast and strong. Good default.", "vision": True},
+    {"id": "haiku", "label": "Haiku (latest)", "description": "Fastest. Fine for background work.", "vision": True},
+]
+ANTHROPIC_FALLBACK = [
+    {"id": "claude-opus-5-5", "label": "Claude Opus 5.5", "description": "Most capable.", "vision": True},
+    {"id": "claude-sonnet-5-5", "label": "Claude Sonnet 5.5", "description": "Fast and strong.", "vision": True},
+    {"id": "claude-haiku-5-5", "label": "Claude Haiku 5.5", "description": "Fastest.", "vision": True},
+]
+_model_cache: dict[str, tuple[float, list[dict]]] = {}
+
+
+async def _fetch_api_models(provider: str, key: str) -> list[dict]:
+    import time as _t
+    hit = _model_cache.get(provider)
+    if hit and _t.time() - hit[0] < 600 and hit[1]:
+        return hit[1]
+    out: list[dict] = []
+    async with httpx.AsyncClient(timeout=8) as c:
+        if provider == "openai":
+            r = await c.get("https://api.openai.com/v1/models", headers={"Authorization": f"Bearer {key}"})
+            if r.status_code == 200:
+                ids = sorted({m["id"] for m in r.json().get("data", [])}, reverse=True)
+                skip = ("embedding", "whisper", "tts", "dall-e", "moderation", "audio", "realtime", "transcribe", "image", "search", "davinci", "babbage")
+                out = [{"id": i, "label": i, "description": "", "vision": True} for i in ids
+                       if (i.startswith("gpt") or i.startswith("o")) and not any(x in i for x in skip)]
+        else:
+            r = await c.get("https://api.anthropic.com/v1/models", headers={"x-api-key": key, "anthropic-version": "2023-06-01"})
+            if r.status_code == 200:
+                out = [{"id": m["id"], "label": m.get("display_name") or m["id"], "description": "", "vision": True}
+                       for m in r.json().get("data", [])]
+    _model_cache[provider] = (_t.time(), out)
+    return out
+
+
+async def model_catalog() -> dict:
+    """Everything the model picker needs: which providers are ready and which models each one offers."""
+    s = load_settings()
+    status = await provider_status()
+    cat = {}
+    cm = codex_models()
+    cat["codex"] = {"models": cm or [{"id": m, "label": m, "description": "", "vision": True,
+                                         "efforts": EFFORTS, "default_effort": "medium"} for m in MODEL_SUGGESTIONS["codex"]],
+                    "source": "your ChatGPT plan" if cm else "defaults"}
+    cat["claude_code"] = {"models": [m | {"efforts": ["low", "medium", "high", "xhigh", "max"], "default_effort": "medium"}
+                                     for m in CLAUDE_CODE_MODELS], "source": "your Claude plan"}
+    for p in ("openai", "anthropic"):
+        key = s["providers"][p].get("api_key")
+        models, source = [], "needs an API key"
+        if key:
+            try:
+                models = await _fetch_api_models(p, key)
+                source = "your API key"
+            except Exception:
+                models, source = [], "could not reach the API"
+        if not models:
+            models = ANTHROPIC_FALLBACK if p == "anthropic" else [{"id": m, "label": m, "description": "", "vision": True}
+                                                                     for m in MODEL_SUGGESTIONS["openai"]]
+        effs = ["low", "medium", "high"] if p == "openai" else []
+        cat[p] = {"models": [m | {"efforts": effs, "default_effort": "medium" if effs else ""} for m in models], "source": source}
+    for p in cat:
+        cat[p]["label"] = PROVIDERS[p]
+        cat[p]["status"] = status[p]
+    return cat
+
 
 TIMEOUT = 900
 

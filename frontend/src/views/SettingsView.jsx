@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Cpu, KeyRound, ScrollText, Brain, FolderCog, CheckCircle2, XCircle, Loader2, RotateCcw, Save, FolderOpen } from 'lucide-react'
 import { api } from '../api'
-import { FolderPicker, Segmented, useToast } from '../components/ui'
+import { FolderPicker, useToast } from '../components/ui'
+import ModelPicker, { modelLabel } from '../components/ModelPicker'
 
 const ROLE_INFO = {
   planner: { label: 'Planner', hint: 'Builds and updates your study plan. Benefits from strong reasoning.' },
@@ -13,7 +14,6 @@ const PROMPT_INFO = {
   planner: 'Study planner', plan_updater: 'Plan updater', tutor: 'Tutor', reviewer: 'Reviewer',
   notetaker: 'Note-taker', memory_updater: 'Memory updater', summary: 'Chat summary', math: 'Math formatting (shared)',
 }
-const SHORT = { codex: 'ChatGPT · Codex', claude_code: 'Claude · Claude Code', openai: 'OpenAI API', anthropic: 'Anthropic API' }
 const SECTIONS = [
   { id: 'models', label: 'Models', icon: Cpu },
   { id: 'prompts', label: 'Prompts', icon: ScrollText },
@@ -23,27 +23,28 @@ const SECTIONS = [
 
 function Models({ settings, setSettings, save }) {
   const toast = useToast()
-  const [info, setInfo] = useState(null)
+  const [catalog, setCatalog] = useState(null)
   const [testing, setTesting] = useState({})
   const [keys, setKeys] = useState({ openai: '', anthropic: '' })
-  useEffect(() => { api('/api/models').then(setInfo) }, [])
-  if (!info) return <p className="muted">Checking providers…</p>
+  const loadCatalog = () => api('/api/models').then((r) => setCatalog(r.catalog))
+  useEffect(() => { loadCatalog() }, [])
 
-  const setRole = (role, patch) => {
-    const roles = { ...settings.roles, [role]: { ...settings.roles[role], ...patch } }
-    if (patch.provider) {
-      roles[role].model = info.suggestions[patch.provider]?.[0] || ''
-      const ef = info.efforts[patch.provider] || []
-      if (!ef.includes(roles[role].effort)) roles[role].effort = ef.includes('medium') ? 'medium' : ef[0] || ''
-    }
-    setSettings({ ...settings, roles })
-    save({ roles })
-  }
-  const applyAll = (role) => {
-    const r = settings.roles[role]
-    const roles = Object.fromEntries(Object.keys(settings.roles).map((k) => [k, { ...settings.roles[k], provider: r.provider, model: r.model }]))
+  const setRole = (role, cfg) => {
+    const roles = { ...settings.roles, [role]: cfg }
     setSettings({ ...settings, roles }); save({ roles })
-    toast({ kind: 'success', text: `All roles now use ${r.model || r.provider}.` })
+    setTesting((t) => ({ ...t, [role]: null }))
+  }
+  const preset = (kind) => {
+    const base = settings.roles.tutor
+    const m = catalog?.[base.provider]?.models?.find((x) => x.id === base.model)
+    const effs = m?.efforts || []
+    const pickEff = (want) => (effs.includes(want) ? want : effs.includes('medium') ? 'medium' : effs[0] || '')
+    const roles = Object.fromEntries(Object.keys(settings.roles).map((r) => [r, {
+      provider: base.provider, model: base.model,
+      effort: kind === 'same' ? base.effort : pickEff(r === 'planner' || r === 'tutor' ? 'high' : 'medium'),
+    }]))
+    setSettings({ ...settings, roles }); save({ roles })
+    toast({ kind: 'success', text: kind === 'same' ? `Every agent now uses ${modelLabel(catalog, base)} · ${base.effort}.` : 'Recommended: strong reasoning for Planner and Tutor, faster for Reviewer and background.' })
   }
   const test = async (role) => {
     setTesting((t) => ({ ...t, [role]: 'run' }))
@@ -53,33 +54,38 @@ function Models({ settings, setSettings, save }) {
   const saveKey = async (p) => {
     await save({ providers: { ...settings.providers, [p]: { api_key: keys[p] } } })
     setKeys((k) => ({ ...k, [p]: '' }))
-    setInfo(await api('/api/models'))
-    toast({ kind: 'success', text: 'API key saved locally.' })
+    await loadCatalog()
+    toast({ kind: 'success', text: 'API key saved on this computer. Its models are now in the list.' })
   }
+  if (!catalog) return <p className="muted">Checking your subscriptions and keys…</p>
 
   return (
     <div className="stack">
       <section className="card">
-        <h3>Providers</h3>
-        <p className="muted small">Use a subscription you already have, or an API key. Keys are stored only on this computer.</p>
-        <div className="provider-grid">
-          {Object.entries(info.providers).map(([id, label]) => {
-            const st = info.status[id]
+        <div className="row between">
+          <div>
+            <h3>Model for each agent</h3>
+            <p className="muted small">Pick from the models your subscription or API key actually offers. Each agent can use a different one.</p>
+          </div>
+          <div className="row">
+            <button className="btn small ghost" onClick={() => preset('recommended')} title="Tutor's model for all; high reasoning for Planner and Tutor, medium for the rest">Recommended</button>
+            <button className="btn small ghost" onClick={() => preset('same')} title="Use the Tutor's model and reasoning for every agent">Same for all</button>
+          </div>
+        </div>
+        <div className="roles">
+          {Object.keys(ROLE_INFO).map((role) => {
+            const t = testing[role]
             return (
-              <div key={id} className="provider">
-                <div className="provider-head">
-                  {st.ready ? <CheckCircle2 size={16} className="ok" /> : <XCircle size={16} className="bad" />}
-                  <b>{label}</b>
+              <div key={role} className="role-row v2">
+                <div className="role-name">
+                  <b>{ROLE_INFO[role].label}</b>
+                  <span className="muted small">{ROLE_INFO[role].hint}</span>
                 </div>
-                <div className="muted small">{st.detail}</div>
-                {(id === 'openai' || id === 'anthropic') && (
-                  <div className="key-row">
-                    <KeyRound size={14} className="muted" />
-                    <input type="password" placeholder={settings.providers[id].api_key || (id === 'openai' ? 'sk-…' : 'sk-ant-…')}
-                      value={keys[id]} onChange={(e) => setKeys((k) => ({ ...k, [id]: e.target.value }))} />
-                    <button className="btn small" disabled={!keys[id]} onClick={() => saveKey(id)}>Save</button>
-                  </div>
-                )}
+                <ModelPicker catalog={catalog} value={settings.roles[role]} onChange={(cfg) => setRole(role, cfg)} align="right" />
+                <button className="btn small" onClick={() => test(role)} disabled={t === 'run'}>
+                  {t === 'run' ? <Loader2 size={13} className="spin" /> : t === 'ok' ? <><CheckCircle2 size={13} className="ok" /> Works</> : 'Test'}
+                </button>
+                {t && t !== 'run' && t !== 'ok' && <div className="role-test bad">{t}</div>}
               </div>
             )
           })}
@@ -87,48 +93,28 @@ function Models({ settings, setSettings, save }) {
       </section>
 
       <section className="card">
-        <h3>Model for each agent</h3>
-        <p className="muted small">Each agent can run on a different provider and model.</p>
-        <div className="roles">
-          {Object.keys(ROLE_INFO).map((role) => {
-            const r = settings.roles[role]
-            const cm = r.provider === 'codex' && (info.codex_models || []).find((m) => m.id === r.model)
-            const efforts = (cm && cm.efforts.length ? cm.efforts : info.efforts[r.provider]) || []
-            const t = testing[role]
-            return (
-              <div key={role} className="role-row">
-                <div className="role-name">
-                  <b>{ROLE_INFO[role].label}</b>
-                  <span className="muted small">{ROLE_INFO[role].hint}</span>
-                </div>
-                <label className="field compact">
-                  <span>Provider</span>
-                  <select value={r.provider} onChange={(e) => setRole(role, { provider: e.target.value })}>
-                    {Object.keys(info.providers).map((id) => <option key={id} value={id}>{SHORT[id] || id}</option>)}
-                  </select>
-                </label>
-                <label className="field compact">
-                  <span>Model</span>
-                  <input list={`models-${r.provider}`} value={r.model} placeholder="default" onChange={(e) => setRole(role, { model: e.target.value })} />
-                  <datalist id={`models-${r.provider}`}>{(info.suggestions[r.provider] || []).map((m) => <option key={m} value={m} />)}</datalist>
-                </label>
-                <label className="field compact">
-                  <span>Reasoning</span>
-                  <select value={r.effort} onChange={(e) => setRole(role, { effort: e.target.value })}>
-                    {!efforts.includes(r.effort) && <option value={r.effort}>{r.effort || 'default'}</option>}
-                    {efforts.map((e) => <option key={e} value={e}>{e}</option>)}
-                  </select>
-                </label>
-                <div className="role-actions">
-                  <button className="btn small" onClick={() => test(role)} disabled={t === 'run'}>
-                    {t === 'run' ? <Loader2 size={13} className="spin" /> : 'Test'}
-                  </button>
-                  {role === 'tutor' && <button className="btn small ghost" onClick={() => applyAll(role)} title="Use this provider and model for every agent">Use for all</button>}
-                </div>
-                {t && t !== 'run' && <div className={`role-test ${t === 'ok' ? 'ok' : 'bad'}`}>{t === 'ok' ? 'Connected ✓' : t}</div>}
+        <h3>Connections</h3>
+        <p className="muted small">Use a subscription you already have, or an API key. Keys stay on this computer.</p>
+        <div className="provider-grid">
+          {Object.entries(catalog).map(([id, p]) => (
+            <div key={id} className={`provider ${p.status.ready ? 'ready' : ''}`}>
+              <div className="provider-head">
+                {p.status.ready ? <CheckCircle2 size={16} className="ok" /> : <XCircle size={16} className="bad" />}
+                <b>{p.label}</b>
               </div>
-            )
-          })}
+              <div className="muted small">{p.status.ready ? `${p.models.length} models · ${p.source}` : p.status.detail}</div>
+              {(id === 'openai' || id === 'anthropic') && (
+                <div className="key-row">
+                  <KeyRound size={14} className="muted" />
+                  <input type="password" placeholder={settings.providers[id].api_key || (id === 'openai' ? 'Paste sk-…' : 'Paste sk-ant-…')}
+                    value={keys[id]} onChange={(e) => setKeys((k) => ({ ...k, [id]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && keys[id]) saveKey(id) }} />
+                  <button className="btn small" disabled={!keys[id]} onClick={() => saveKey(id)}>Save</button>
+                </div>
+              )}
+              {id === 'codex' && !p.status.ready && <code className="tiny">codex login</code>}
+            </div>
+          ))}
         </div>
       </section>
     </div>

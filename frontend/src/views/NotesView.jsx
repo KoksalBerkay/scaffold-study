@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Folder, BookOpen, PencilLine, Search, Check, Loader2, FilePlus, Sparkles } from 'lucide-react'
-import { api } from '../api'
+import { api, setBusy } from '../api'
 import Markdown, { Properties, splitFrontmatter } from '../components/Markdown'
 import LiveEditor from '../components/LiveEditor'
 import { useToast } from '../components/ui'
@@ -27,6 +27,7 @@ export default function NotesView({ initial }) {
     setSaveState('saving')
     try {
       await api('/api/notes/file', { method: 'PUT', body: { path, content: text } })
+      if (latest.current.text != null) setBusy(false)
       latest.current.text = null
       setSaveState('saved')
     } catch (e) { setSaveState('dirty'); toast({ kind: 'error', text: `Could not save: ${e.message}` }) }
@@ -56,6 +57,7 @@ export default function NotesView({ initial }) {
   useEffect(() => () => flush(), []) // eslint-disable-line
 
   const onEdit = (text) => {
+    if (latest.current.text == null) setBusy(true)
     latest.current = { sel, text }
     setSaveState('dirty')
     clearTimeout(timer.current)

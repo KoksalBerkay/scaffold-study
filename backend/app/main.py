@@ -69,15 +69,7 @@ def put_settings(body: dict = Body(...)):
 
 @app.get("/api/models")
 async def models():
-    sugg = dict(llm.MODEL_SUGGESTIONS)
-    efforts = {p: llm.EFFORTS for p in llm.PROVIDERS}
-    cm = llm.codex_models()
-    if cm:
-        sugg["codex"] = [m["id"] for m in cm]
-        efforts["codex"] = max((m["efforts"] for m in cm), key=len)
-    efforts["claude_code"] = ["low", "medium", "high", "xhigh", "max"]
-    return {"providers": llm.PROVIDERS, "suggestions": sugg, "efforts": efforts, "codex_models": cm,
-            "status": await llm.provider_status()}
+    return {"catalog": await llm.model_catalog()}
 
 
 @app.post("/api/models/test")
@@ -89,6 +81,13 @@ async def test_model(body: dict = Body(...)):
         return {"ok": True, "reply": out[:200]}
     except llm.LLMError as e:
         return {"ok": False, "reply": str(e)}
+
+
+@app.get("/api/version")
+def version():
+    """Changes whenever the frontend is rebuilt, so open windows can reload themselves."""
+    idx = ROOT / "frontend" / "dist" / "index.html"
+    return {"build": idx.stat().st_mtime if idx.exists() else 0}
 
 
 # ---------------- prompts & memory ----------------
@@ -182,17 +181,38 @@ def raw_material(path: str):
 
 @app.get("/api/planner")
 def planner_state():
-    return {"setup": planner.load_setup(), "files": planner.read_plan(), "plan_dir": planner.PLAN_DIR}
+    from . import jobs
+    return {"setup": planner.load_setup(), "files": planner.read_plan(), "plan_dir": planner.PLAN_DIR,
+            "running": jobs.running("planner")}
+
+
+def _start_planner(make):
+    from . import jobs
+    if jobs.running("planner"):
+        raise HTTPException(409, "The planner is already working. Wait for it to finish.")
+    jobs.start("planner", make)
+    return {"ok": True}
 
 
 @app.post("/api/planner/generate")
 async def planner_generate(body: dict = Body(...)):
-    return sse(planner.generate(body))
+    if not body.get("materials_path") or not Path(body["materials_path"]).expanduser().is_dir():
+        raise HTTPException(400, "Choose an existing materials folder first.")
+    return _start_planner(lambda: planner.generate(body))
 
 
 @app.post("/api/planner/log")
 async def planner_log(body: dict = Body(...)):
-    return sse(planner.log_progress(body["text"]))
+    if not (body.get("text") or "").strip():
+        raise HTTPException(400, "Write what you did first.")
+    return _start_planner(lambda: planner.log_progress(body["text"]))
+
+
+@app.get("/api/planner/events")
+async def planner_events(after: int = 0):
+    from . import jobs
+    return StreamingResponse(jobs.follow("planner", after), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/planner/toggle")

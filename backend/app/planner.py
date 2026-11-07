@@ -43,7 +43,7 @@ async def with_heartbeat(coro, stage: str, detail: str = ""):
     start = asyncio.get_event_loop().time()
     try:
         while not task.done():
-            yield {"type": "status", "stage": stage, "detail": detail,
+            yield {"type": "status", "stage": stage, "detail": detail, "heartbeat": True,
                    "elapsed": round(asyncio.get_event_loop().time() - start)}
             await asyncio.wait({task}, timeout=1.0)
         yield ("result", task.result())

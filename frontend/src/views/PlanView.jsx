@@ -3,7 +3,7 @@ import {
   FolderOpen, CalendarDays, Clock, Sparkles, ArrowRight, ArrowLeft, RefreshCw, PencilLine,
   NotebookPen, Play, BookOpen, FileText, Timer, ListChecks, Check,
 } from 'lucide-react'
-import { api, stream } from '../api'
+import { api, follow, setBusy } from '../api'
 import Markdown, { splitFrontmatter } from '../components/Markdown'
 import { FolderPicker, JobProgress, Modal, Pitch, Segmented, useToast } from '../components/ui'
 
@@ -232,33 +232,44 @@ export default function PlanView({ onStudy }) {
     setState(r)
     return r
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load().then((r) => { if (r.running) watch(['Reading your materials', 'Thinking it through and scheduling', 'Writing your plan'], 'Your plan is ready.') }) }, []) // eslint-disable-line
 
   const hasPlan = state && Object.keys(state.files || {}).length > 0
   const current = state?.files?.[tab] || ''
   const { body, meta, offset } = useMemo(() => splitFrontmatter(current), [current])
   const progress = useMemo(() => weekProgress(state?.files?.['Quick Plan'] || ''), [state])
 
-  const runJob = async (url, payload, steps, doneMsg) => {
+  const watch = async (steps, doneMsg) => {
     setMode('generating')
+    setJob((j) => j || { steps, current: 0, elapsed: 0, detail: '' })
+    setBusy(true)
+    const res = await follow('/api/planner/events', (ev) => {
+      if (ev.type === 'reconnecting') return setJob((j) => ({ ...j, detail: 'Connection dropped. Reconnecting; the planner keeps working on the server…' }))
+      if (ev.type === 'status') setJob((j) => ({ ...j, current: ev.stage === 'scan' ? 0 : 1, elapsed: ev.elapsed, detail: ev.detail }))
+      if (ev.type === 'done') setJob((j) => ({ ...j, current: j.steps.length }))
+    })
+    setBusy(false)
+    const st = await load()
+    if (res.ok) {
+      setTab('Quick Plan'); setMode('view')
+      toast({ kind: 'success', text: doneMsg })
+    } else if (!res.idle) {
+      toast({ kind: 'error', title: 'The planner stopped', text: res.error || 'Unknown error', timeout: 12000 })
+      setMode(Object.keys(st.files || {}).length ? 'view' : 'wizard')
+    } else {
+      setMode(Object.keys(st.files || {}).length ? 'view' : 'wizard')
+    }
+  }
+
+  const runJob = async (url, payload, steps, doneMsg) => {
     setJob({ steps, current: 0, elapsed: 0, detail: '' })
     try {
-      await stream(url, payload, (ev) => {
-        if (ev.type === 'status') {
-          const idx = ev.stage === 'scan' ? 0 : 1
-          setJob((j) => ({ ...j, current: idx, elapsed: ev.elapsed, detail: ev.detail }))
-        } else if (ev.type === 'done') {
-          setJob((j) => ({ ...j, current: steps.length }))
-        }
-      })
-      await load()
-      setTab('Quick Plan')
-      setMode('view')
-      toast({ kind: 'success', text: doneMsg })
+      await api(url, { method: 'POST', body: payload })
     } catch (e) {
-      toast({ kind: 'error', title: 'The planner stopped', text: e.message, timeout: 10000 })
-      setMode(hasPlan ? 'view' : 'wizard')
+      toast({ kind: 'error', title: 'Could not start the planner', text: /load failed|failed to fetch/i.test(e.message) ? 'Could not reach Scaffold. Is it still running?' : e.message, timeout: 10000 })
+      return
     }
+    watch(steps, doneMsg)
   }
 
   const generate = (setup) => runJob('/api/planner/generate', setup,

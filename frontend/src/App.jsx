@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap,
 } from 'lucide-react'
-import { api } from './api'
+import { api, isBusy } from './api'
 import { ToastProvider, useToast } from './components/ui'
 import ChatSidebar from './components/ChatSidebar'
 import PlanView from './views/PlanView'
@@ -51,6 +51,19 @@ function Shell() {
     return () => { window.removeEventListener('scaffold:chats', h); window.removeEventListener('focus', h) }
   }, [loadChats])
   useEffect(() => { api('/api/settings').then(setModels).catch(() => {}) }, [route.view])
+
+  // Auto-update: when the app is rebuilt, reload as soon as nothing is in progress
+  useEffect(() => {
+    let first = null
+    const t = setInterval(async () => {
+      try {
+        const { build } = await api('/api/version')
+        if (first == null) first = build
+        else if (build !== first && !isBusy() && document.visibilityState === 'visible') window.location.reload()
+      } catch (e) { /* server restarting */ }
+    }, 3000)
+    return () => clearInterval(t)
+  }, [])
 
   // Background events (notes written, memory updated)
   useEffect(() => {

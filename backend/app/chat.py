@@ -210,7 +210,9 @@ def create_chat(body: dict = Body(default={})):
 
 @router.get("/api/chats/{cid}")
 def get_chat(cid: str):
-    return {"meta": load_meta(cid), "messages": load_messages(cid), "summary": read_summary(cid)}
+    from . import jobs
+    return {"meta": load_meta(cid), "messages": load_messages(cid), "summary": read_summary(cid),
+            "running": jobs.running(f"chat:{cid}")}
 
 
 @router.patch("/api/chats/{cid}")
@@ -359,11 +361,12 @@ def _rel(root: Path | None, link: str) -> str | None:
         return None
 
 
-def build_context(meta: dict, user_text: str) -> tuple[str, str]:
-    """Returns (context for the tutor, material excerpt for the reviewer)."""
+def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str]]:
+    """Returns (context for the tutor, material excerpt for the reviewer, what was found, for the activity log)."""
     root = materials_dir()
     parts = [f"Today is {today_str()}."]
     material_used = []
+    found: list[str] = []
 
     if meta.get("task"):
         parts.append(f"## This chat was started from a study-plan task\n{meta['task']}")
@@ -374,10 +377,12 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str]:
             block = f"## Pinned material: {rel}\n{text}"
             parts.append(block)
             material_used.append(block)
+            found.append(f"Opened {Path(rel).name} from your plan task")
 
     if root and user_text.strip():
         hits = materials.search(root, user_text, k=4)
         if hits:
+            found.append("Found matching pages: " + ", ".join(f"{Path(h['file']).name} p.{h['page']}" for h in hits))
             block = "## Material pages that match the student's message\n" + "\n\n".join(
                 f"[{h['file']} · page {h['page']}]\n{h['text'][:1200]}" for h in hits)
             parts.append(block)
@@ -386,11 +391,14 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str]:
     qp = plan_file("Quick Plan")
     if qp.exists():
         parts.append("## The student's Quick Plan (this week)\n" + qp.read_text()[:3500])
+        found.append("Read your Quick Plan")
 
     parts.append("## Materials folder\n" + _materials_listing(root))
 
     tree = [n["path"] for n in notes_tree() if not n["path"].startswith(PLAN_DIR + "/")]
     parts.append("## Existing notes\n" + ("\n".join(f"- {t}" for t in tree[:120]) or "(none yet)"))
+    if tree:
+        found.append(f"Checked {len(tree)} existing notes")
     for t in (meta.get("notes_touched") or [])[-2:]:
         try:
             parts.append(f"## Note from this chat: {t}\n" + note_target(t).read_text()[:6000])
@@ -405,8 +413,11 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str]:
         others.append(f"- {c['id']}: {c['title'] or 'untitled'}" + (f" (summary: {' '.join(s.split())[:200]}…)" if s else ""))
     if others:
         parts.append("## Other chats\n" + "\n".join(others))
+        found.append(f"Looked at {len(others)} earlier chats")
+    if not found:
+        found.append("No materials folder yet: teaching from the conversation only")
 
-    return "\n\n".join(parts), "\n\n".join(material_used)
+    return "\n\n".join(parts), "\n\n".join(material_used), found
 
 
 async def run_tool(name: str, args: dict) -> tuple[str, list[str]]:
@@ -467,44 +478,78 @@ def parse_json(text: str) -> dict | None:
 
 # ---------------- the main loop ----------------
 
-async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True):
+TOOL_LABEL = {"search_materials": "Searching your materials for", "read_material": "Reading", "view_page": "Looking at",
+              "read_note": "Opening note", "read_chat_summary": "Checking an earlier chat"}
+ISSUE_LABEL = {"correctness": "Correctness", "completeness": "Missing step", "gave_answer": "Gave the answer away",
+               "feedback": "Feedback on your attempt", "memory": "Your preferences", "clarity": "Clarity"}
+
+
+def _model_name(role: str) -> str:
+    r = load_settings()["roles"].get(role, {})
+    return " · ".join(x for x in (r.get("model") or r.get("provider"), r.get("effort")) if x)
+
+
+async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True, retry: bool = False):
     meta = load_meta(cid)
     settings = load_settings()
     if review is not None:
         settings["review"] = review
-    text = (body.get("text") or "").strip()
-    atts = body.get("attachments") or []
-    extra_text, images = expand_attachments(atts)
+    activity: list[dict] = []
+    t0 = time.time()
 
-    user_msg = {"role": "user", "content": text, "attachments": atts, "ts": time.time(),
-                "image_paths": images, "model_content": (text + ("\n\n" + extra_text if extra_text else "")) or "(see the attached images)"}
-    prior = load_messages(cid)
-    append_message(cid, user_msg)
-    if not meta.get("title"):
-        meta["title"] = (text or (atts[0]["name"] if atts else "New chat"))[:70]
-        save_meta(meta)
-        broadcast({"type": "chats"})
+    def act(kind: str, text: str, **extra) -> dict:
+        item = {"kind": kind, "text": text, "t": round(time.time() - t0, 1), **extra}
+        activity.append(item)
+        return {"type": "activity", **item}
+
+    if retry:
+        msgs = load_messages(cid)
+        if not msgs or msgs[-1]["role"] != "user":
+            raise ValueError("Nothing to retry.")
+        user_msg, prior = msgs[-1], msgs[:-1]
+        images = user_msg.get("image_paths") or []
+        text = user_msg.get("content", "")
+    else:
+        text = (body.get("text") or "").strip()
+        atts = body.get("attachments") or []
+        extra_text, images = expand_attachments(atts)
+        user_msg = {"role": "user", "content": text, "attachments": atts, "ts": time.time(), "image_paths": images,
+                    "model_content": (text + ("\n\n" + extra_text if extra_text else "")) or "(see the attached images)"}
+        prior = load_messages(cid)
+        append_message(cid, user_msg)
+        if not meta.get("title"):
+            meta["title"] = (text or (atts[0]["name"] if atts else "New chat"))[:70]
+            save_meta(meta)
+            broadcast({"type": "chats"})
     yield {"type": "user_saved"}
+    if meta.get("last_error"):
+        meta.pop("last_error", None)
+        save_meta(meta)
 
     yield {"type": "status", "stage": "context", "detail": "Reading your materials, notes and plan"}
-    context, material_used = await asyncio.to_thread(build_context, meta, text)
+    if images:
+        yield act("context", f"Received {len(images)} image{'s' if len(images) > 1 else ''}; the tutor will read {'them' if len(images) > 1 else 'it'}")
+    context, material_used, found = await asyncio.to_thread(build_context, meta, text)
+    for f in found:
+        yield act("context", f)
     system = render_prompt("tutor") + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
     convo = history_for_model(cid, prior + [user_msg])
 
     # ---- draft, with up to 2 tool rounds
-    draft = None
+    draft = ""
     tool_log = []
+    yield act("draft", f"Tutor is writing a first draft ({_model_name('tutor')})")
     for round_ in range(3):
         out = None
         async for ev in with_heartbeat(llm.complete("tutor", system, convo), "drafting",
-                                       "The tutor is writing" if round_ == 0 else "The tutor is reading what it looked up"):
+                                       "Writing the first draft" if round_ == 0 else "Continuing with what it looked up"):
             if isinstance(ev, tuple):
                 out = ev[1]
             else:
                 yield ev
-        calls = TOOL_RE.findall(out)
+        calls = TOOL_RE.findall(out or "")
         if not calls or round_ == 2:
-            draft = TOOL_RE.sub("", out).strip() if calls else out
+            draft = TOOL_RE.sub("", out or "").strip()
             break
         results, imgs = [], []
         for name, raw in calls[:4]:
@@ -512,8 +557,11 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
                 args = json.loads(raw) if raw else {}
             except Exception:
                 args = {}
-            label = args.get("file") or args.get("query") or args.get("path") or args.get("id") or ""
-            yield {"type": "status", "stage": "tool", "detail": f"{name.replace('_', ' ')}: {label}"}
+            target = args.get("query") or args.get("path") or args.get("id") or ""
+            if args.get("file"):
+                target = Path(args["file"]).name + (f" p.{args.get('page') or args.get('pages')}" if (args.get("page") or args.get("pages")) else "")
+            yield {"type": "status", "stage": "tool", "detail": f"{TOOL_LABEL.get(name, name)} {target}"}
+            yield act("tool", f"{TOOL_LABEL.get(name, name)} {target}".strip())
             res, im = await run_tool(name, args)
             results.append(f"### {name} {json.dumps(args)}\n{res}")
             imgs += im
@@ -521,43 +569,65 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
         material_used += "\n\n" + "\n\n".join(results)
         convo = convo + [{"role": "assistant", "content": out},
                          {"role": "user", "content": "TOOL RESULTS:\n" + "\n\n".join(results), "images": imgs}]
+    if not draft:  # the model only asked for tools, or returned nothing
+        yield act("draft", "Asking the tutor to answer directly")
+        out = await llm.complete("tutor", system, convo + [{"role": "user", "content": "Write your reply to the student now. Do not call tools."}])
+        draft = TOOL_RE.sub("", out or "").strip()
+    if not draft:
+        raise llm.LLMError("The tutor returned an empty answer. Try again, or pick another model.")
+    yield act("draft", f"Draft ready ({len(draft.split())} words)")
 
     # ---- review loop
     review = {"enabled": bool(settings.get("review")), "rounds": [], "student_note": ""}
     if settings.get("review"):
         recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}" for m in prior[-6:])
         rsys = render_prompt("reviewer")
-        for r in range(int(settings.get("max_review_rounds", 2)) + 1):
-            yield {"type": "status", "stage": "reviewing", "detail": "Checking correctness, completeness and that it doesn't give the answer away"}
-            rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg['model_content']}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
+        max_rounds = int(settings.get("max_review_rounds", 2))
+        for r in range(max_rounds + 1):
+            yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
+            rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
                    f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}\n\nTUTOR'S DRAFT:\n{draft}")
             verdict = None
             async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
-                                           "reviewing", "Checking correctness, completeness and that it doesn't give the answer away"):
+                                           "reviewing", "Correct? Complete? Not giving the answer away?"):
                 if isinstance(ev, tuple):
-                    verdict = parse_json(ev[1]) or {"verdict": "approve", "issues": [], "student_note": ""}
+                    verdict = parse_json(ev[1])
                 else:
                     yield ev
-            issues = verdict.get("issues") or []
+            if verdict is None:
+                yield act("review", "Reviewer's reply could not be read; keeping the draft")
+                verdict = {"verdict": "approve", "issues": [], "student_note": ""}
+            issues = [i for i in (verdict.get("issues") or []) if isinstance(i, dict)]
             review["rounds"].append({"verdict": verdict.get("verdict"), "issues": issues})
             if verdict.get("student_note"):
                 review["student_note"] = verdict["student_note"]
             yield {"type": "review", "round": r + 1, "verdict": verdict.get("verdict"), "issues": issues}
-            if verdict.get("verdict") != "revise" or not issues or r == int(settings.get("max_review_rounds", 2)):
+            if verdict.get("verdict") != "revise" or not issues:
+                yield act("approved", "Reviewer approved ✓" if r == 0 else f"Reviewer approved the revision ✓")
+                break
+            yield act("issues", f"Reviewer sent it back with {len(issues)} issue{'s' if len(issues) != 1 else ''}",
+                      issues=[{"label": ISSUE_LABEL.get(i.get("type"), i.get("type") or "Issue"), "fix": i.get("fix", "")} for i in issues])
+            if r == max_rounds:
+                yield act("issues", "Review limit reached: showing the best version")
                 break
             fb = "\n".join(f"- [{i.get('type')}] {i.get('where', '')}: {i.get('fix', '')}" for i in issues)
             convo2 = convo + [{"role": "assistant", "content": draft},
                               {"role": "user", "content": "REVIEWER FEEDBACK. Fix every point and return the full revised message for the student, nothing else. Keep all correct teaching from your draft; change only what the points require. Never reveal a result the student has not produced yet:\n" + fb}]
-            async for ev in with_heartbeat(llm.complete("tutor", system, convo2), "revising", f"Fixing {len(issues)} issue{'s' if len(issues) != 1 else ''} the reviewer found"):
+            yield act("revise", f"Tutor is fixing {len(issues)} issue{'s' if len(issues) != 1 else ''}")
+            async for ev in with_heartbeat(llm.complete("tutor", system, convo2), "revising",
+                                           f"Fixing {len(issues)} issue{'s' if len(issues) != 1 else ''} the reviewer found"):
                 if isinstance(ev, tuple):
-                    draft = TOOL_RE.sub("", ev[1]).strip()
+                    draft = TOOL_RE.sub("", ev[1]).strip() or draft
                 else:
                     yield ev
         last = review["rounds"][-1]["verdict"] if review["rounds"] else "approve"
         review["final"] = "approved" if last != "revise" else "best_effort"
+    else:
+        yield act("approved", "Review is off: showing the draft")
 
     final = normalize_math(draft)
-    asst = {"role": "assistant", "content": final, "ts": time.time(), "review": review, "tools": tool_log}
+    asst = {"role": "assistant", "content": final, "ts": time.time(), "review": review, "tools": tool_log,
+            "activity": activity, "seconds": round(time.time() - t0)}
     append_message(cid, asst)
     save_meta(meta)
     yield {"type": "message", "message": asst}
@@ -614,6 +684,8 @@ async def notes_job(cid: str, user_msg: dict, asst: dict):
                 meta["notes_touched"] = list(dict.fromkeys((meta.get("notes_touched") or []) + written))
                 save_meta(meta)
                 broadcast({"type": "notes", "paths": written, "chat": cid})
+        except ChatGone:
+            pass
         except Exception as e:
             broadcast({"type": "bg_error", "title": "Note-taker failed", "message": str(e)[:200]})
 
@@ -650,22 +722,47 @@ async def summary_job(cid: str):
         pass
 
 
+def _remember_error(cid: str, message: str):
+    try:
+        meta = load_meta(cid)
+        meta["last_error"] = message
+        save_meta(meta)
+    except Exception:
+        pass
+
+
+def _start_turn(cid: str, body: dict, retry: bool = False):
+    from . import jobs
+    if jobs.running(f"chat:{cid}"):
+        raise HTTPException(409, "The tutor is still answering in this chat.")
+    jobs.start(f"chat:{cid}", lambda: tutor_turn(cid, body, retry=retry), on_error=lambda m: _remember_error(cid, m))
+    return {"ok": True}
+
+
 @router.post("/api/chats/{cid}/messages")
 async def send_message(cid: str, body: dict = Body(...)):
     load_meta(cid)
     if not (body.get("text") or "").strip() and not body.get("attachments"):
         raise HTTPException(400, "Write a message or attach something first.")
+    return _start_turn(cid, body)
 
-    async def stream():
-        try:
-            async for ev in tutor_turn(cid, body):
-                yield f"data: {json.dumps(ev)}\n\n"
-        except llm.LLMError as e:
-            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
-        except ChatGone:
-            yield f"data: {json.dumps({'type': 'error', 'message': 'This chat was deleted.'})}\n\n"
-        except Exception as e:  # noqa
-            import traceback
-            traceback.print_exc()
-            yield f"data: {json.dumps({'type': 'error', 'message': f'{type(e).__name__}: {e}'})}\n\n"
-    return StreamingResponse(stream(), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})
+
+@router.post("/api/chats/{cid}/retry")
+async def retry_message(cid: str):
+    msgs = load_messages(cid)
+    if not msgs or msgs[-1]["role"] != "user":
+        raise HTTPException(400, "Nothing to retry.")
+    return _start_turn(cid, {}, retry=True)
+
+
+@router.get("/api/chats/{cid}/events")
+async def chat_events(cid: str, after: int = 0):
+    from . import jobs
+    return StreamingResponse(jobs.follow(f"chat:{cid}", after), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@router.get("/api/jobs")
+def active_jobs():
+    from . import jobs
+    return {"running": jobs.any_running()}

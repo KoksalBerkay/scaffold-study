@@ -3,9 +3,10 @@ import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
   FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library,
 } from 'lucide-react'
-import { api, stream, upload } from '../api'
+import { api, follow, setBusy as markBusy, upload } from '../api'
 import Markdown from '../components/Markdown'
 import { Modal, Pitch, useToast } from '../components/ui'
+import ModelPicker from '../components/ModelPicker'
 
 const STAGES = [
   { id: 'context', label: 'Reading your materials' },
@@ -51,12 +52,34 @@ function ReviewBadge({ review }) {
   )
 }
 
-function Pending({ stage, elapsed, detail, rounds }) {
+const ACT_ICON = { context: '📚', draft: '✍️', tool: '🔎', review: '🛡️', issues: '↩︎', revise: '🔧', approved: '✓' }
+
+function ActivityList({ items, live }) {
+  return (
+    <ol className={`activity ${live ? 'live' : ''}`}>
+      {items.map((a, i) => (
+        <li key={i} className={`act act-${a.kind}`}>
+          <span className="act-icon" aria-hidden="true">{ACT_ICON[a.kind] || '•'}</span>
+          <div className="act-body">
+            <span>{a.text}</span>
+            {a.issues?.length > 0 && (
+              <ul className="act-issues">
+                {a.issues.map((is, j) => <li key={j}><span className="issue-tag">{is.label}</span> {is.fix}</li>)}
+              </ul>
+            )}
+          </div>
+          <span className="act-time mono">{a.t != null ? `${a.t}s` : ''}</span>
+        </li>
+      ))}
+    </ol>
+  )
+}
+
+function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting }) {
   const order = ['context', 'drafting', 'tool', 'reviewing', 'revising']
   const idx = order.indexOf(stage)
-  const revising = stage === 'revising' || rounds > 0
   const steps = [...STAGES]
-  if (revising) steps.push({ id: 'revising', label: 'Tutor is fixing what the reviewer found' })
+  if (stage === 'revising' || rounds > 0) steps.push({ id: 'revising', label: 'Tutor is fixing what the reviewer found' })
   const activeId = stage === 'tool' ? 'drafting' : stage
   return (
     <div className="msg assistant pending">
@@ -76,7 +99,20 @@ function Pending({ stage, elapsed, detail, rounds }) {
           })}
         </div>
         {detail && <div className="muted small pdetail">{detail}</div>}
+        {reconnecting && <div className="reconnect small"><Loader2 size={12} className="spin" /> Connection dropped. Reconnecting; the tutor keeps working on the server…</div>}
+        {activity.length > 0 && <ActivityList items={activity.slice(-10)} live />}
       </div>
+    </div>
+  )
+}
+
+function HowMade({ m }) {
+  const [open, setOpen] = useState(false)
+  if (!m.activity?.length) return null
+  return (
+    <div className="howmade">
+      <button className="link small" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'How this answer was made'}{m.seconds ? ` · ${m.seconds}s` : ''}</button>
+      {open && <ActivityList items={m.activity} />}
     </div>
   )
 }
@@ -151,6 +187,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const sentFirst = useRef(false)
 
   const [missing, setMissing] = useState(false)
+  const [failed, setFailed] = useState(null)
   const load = useCallback(async () => {
     try {
       const c = await api(`/api/chats/${chatId}`)
@@ -165,9 +202,13 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     }
   }, [chatId]) // eslint-disable-line
 
-  useEffect(() => { api('/api/settings').then(setSettings) }, [])
+  const [catalog, setCatalog] = useState(null)
+  useEffect(() => { api('/api/settings').then(setSettings); api('/api/models').then((r) => setCatalog(r.catalog)).catch(() => {}) }, [])
   useEffect(() => {
     load().then((c) => {
+      if (c.running) { track(); return }
+      const last = c.messages?.[c.messages.length - 1]
+      if (last && last.role === 'user') setFailed(c.meta?.last_error || 'This answer was interrupted before it finished.')
       if (firstMessage && !sentFirst.current && c.messages.length === 0) {
         sentFirst.current = true
         onConsumedFirst?.()
@@ -207,25 +248,55 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     if (files.length) { e.preventDefault(); addFiles(files) }
   }
 
+  const track = async () => {
+    setBusy((b) => b || { stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
+    markBusy(true)
+    setFailed(null)
+    const res = await follow(`/api/chats/${chatId}/events`, (ev) => {
+      if (ev.type === 'reconnecting') return setBusy((b) => (b ? { ...b, reconnecting: true } : b))
+      setBusy((b) => {
+        if (!b) return b
+        const nb = { ...b, reconnecting: false }
+        if (ev.type === 'status') Object.assign(nb, { stage: ev.stage, elapsed: ev.elapsed ?? b.elapsed, detail: ev.detail })
+        if (ev.type === 'review' && ev.verdict === 'revise') nb.rounds = b.rounds + 1
+        if (ev.type === 'activity') nb.activity = [...(b.activity || []), ev]
+        return nb
+      })
+      if (ev.type === 'user_saved') onChanged?.()
+    })
+    const c = await load()
+    setBusy(null)
+    markBusy(false)
+    if (res.error && c.messages?.length && c.messages[c.messages.length - 1].role === 'user') setFailed(res.error)
+    else if (res.error) toast({ kind: 'error', title: 'The tutor could not answer', text: res.error, timeout: 10000 })
+    taRef.current?.focus()
+  }
+
   const send = async (t = text, a = atts) => {
     const body = (t || '').trim()
     if ((!body && a.length === 0) || busy || a.some((x) => x.uploading)) return
     setText(''); setAtts([])
-    const userMsg = { role: 'user', content: body, attachments: a, ts: Date.now() / 1000 }
-    setMessages((m) => [...m, userMsg])
-    setBusy({ stage: 'context', elapsed: 0, detail: '', rounds: 0 })
+    setMessages((m) => [...m, { role: 'user', content: body, attachments: a, ts: Date.now() / 1000 }])
+    setBusy({ stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
     try {
-      await stream(`/api/chats/${chatId}/messages`, { text: body, attachments: a.map(({ id, name, kind, url }) => ({ id, name, kind, url })) }, (ev) => {
-        if (ev.type === 'status') setBusy((b) => ({ ...b, stage: ev.stage, elapsed: ev.elapsed ?? b?.elapsed, detail: ev.detail }))
-        if (ev.type === 'review') setBusy((b) => ({ ...b, rounds: b.rounds + (ev.verdict === 'revise' ? 1 : 0) }))
-        if (ev.type === 'message') setMessages((m) => [...m, ev.message])
-        if (ev.type === 'user_saved') onChanged?.()
-      })
+      await api(`/api/chats/${chatId}/messages`, { method: 'POST', body: { text: body, attachments: a.map(({ id, name, kind, url }) => ({ id, name, kind, url })) } })
     } catch (e) {
-      toast({ kind: 'error', title: 'The tutor could not answer', text: e.message, timeout: 10000 })
+      // could not even start: give the text and attachments back so nothing is lost
+      setBusy(null)
+      setMessages((m) => m.slice(0, -1))
+      setText(body); setAtts(a)
+      toast({ kind: 'error', title: 'Not sent', text: /load failed|failed to fetch/i.test(e.message) ? 'Could not reach Scaffold. Check that it is running, then press Enter again.' : e.message, timeout: 10000 })
+      return
     }
-    setBusy(null)
-    taRef.current?.focus()
+    track()
+  }
+
+  const retry = async () => {
+    setFailed(null)
+    try {
+      await api(`/api/chats/${chatId}/retry`, { method: 'POST' })
+      track()
+    } catch (e) { setFailed(e.message) }
   }
 
   const toggleSetting = async (key) => {
@@ -275,7 +346,10 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             <button className={`toggle ${settings.auto_notes ? 'on' : ''}`} onClick={() => toggleSetting('auto_notes')} title="Write notes automatically">
               <BookOpen size={14} /> Auto-notes {settings.auto_notes ? 'on' : 'off'}
             </button>
-            {tutor && <a className="model-pill big" href="#/settings/models" title="Change models">{tutor.model || tutor.provider} · {tutor.effort}</a>}
+            {tutor && catalog && (
+              <ModelPicker compact catalog={catalog} value={tutor} align="right"
+                onChange={async (cfg) => { const s = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, tutor: cfg } } }); setSettings(s) }} />
+            )}
           </div>
         )}
       </header>
@@ -311,10 +385,22 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
               )}
               {m.content && <Markdown source={m.content} />}
               {m.role === 'assistant' && <ReviewBadge review={m.review} />}
+              {m.role === 'assistant' && <HowMade m={m} />}
             </div>
           </div>
         ))}
         {busy && <Pending {...busy} />}
+        {!busy && failed && (
+          <div className="msg assistant">
+            <div className="avatar warn-av"><Sparkles size={15} /></div>
+            <div className="bubble failed">
+              <b>The tutor didn't finish this answer.</b>
+              <span className="muted small">{failed}</span>
+              <div className="row"><button className="btn primary small" onClick={retry}>Try again</button>
+                <a className="btn ghost small" href="#/settings/models">Check models</a></div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="composer-wrap">
