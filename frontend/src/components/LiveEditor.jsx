@@ -7,6 +7,7 @@ import { useEffect, useRef } from 'react'
 import { EditorState, StateField } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, keymap, drawSelection, placeholder as phExt } from '@codemirror/view'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
+import { languages } from '@codemirror/language-data'
 import { syntaxTree, syntaxHighlighting, HighlightStyle, indentOnInput } from '@codemirror/language'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
 import { tags as t } from '@lezer/highlight'
@@ -64,6 +65,27 @@ class CheckboxWidget extends WidgetType {
       e.preventDefault()
       view.dispatch({ changes: { from: this.pos + 1, to: this.pos + 2, insert: this.checked ? ' ' : 'x' } })
     })
+    return el
+  }
+  ignoreEvent() { return true }
+}
+
+class CodeLabelWidget extends WidgetType {
+  constructor(lang, code) { super(); this.lang = lang; this.code = code }
+  eq(o) { return o.lang === this.lang && o.code === this.code }
+  toDOM() {
+    const el = document.createElement('span')
+    el.className = 'lp-code-label'
+    const name = document.createElement('span')
+    name.textContent = this.lang || ''
+    const btn = document.createElement('button')
+    btn.type = 'button'
+    btn.textContent = 'Copy'
+    btn.addEventListener('mousedown', (e) => {
+      e.preventDefault(); e.stopPropagation()
+      navigator.clipboard?.writeText(this.code).then(() => { btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy' }, 1400) })
+    })
+    el.append(name, btn)
     return el
   }
   ignoreEvent() { return true }
@@ -212,6 +234,13 @@ function build(state) {
         }
         case 'FencedCode': case 'CodeBlock': {
           skip.push([from, to])
+          if (name === 'FencedCode' && !touches(sel, lineOf(from).from, lineOf(to).to)) {
+            const open = lineOf(from), close = lineOf(to)
+            const lang = (open.text.match(/^\s*(?:```|~~~)\s*([\w+#-]*)/) || [])[1] || ''
+            const code = doc.sliceString(open.to + 1, close.from > open.to ? close.from - 1 : open.to)
+            add(open.from, open.to, Decoration.replace({ widget: new CodeLabelWidget(lang, code) }))
+            if (close.from !== open.from && /^\s*(```|~~~)\s*$/.test(close.text)) add(close.from, close.to, hide)
+          }
           for (let p = from; p <= to;) {
             const l = lineOf(p)
             const first = l.from === lineOf(from).from
@@ -348,6 +377,15 @@ const livePreview = StateField.define({
 
 const highlight = HighlightStyle.define([
   { tag: t.monospace, fontFamily: 'var(--mono)' },
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: 'var(--syn-keyword)' },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: 'var(--syn-string)' },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: 'var(--syn-comment)', fontStyle: 'italic' },
+  { tag: [t.number, t.bool, t.null, t.atom], color: 'var(--syn-number)' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: 'var(--syn-function)' },
+  { tag: [t.typeName, t.className, t.namespace, t.standard(t.typeName)], color: 'var(--syn-type)' },
+  { tag: [t.propertyName, t.attributeName], color: 'var(--syn-property)' },
+  { tag: [t.operator, t.punctuation, t.bracket], color: 'var(--syn-punct)' },
+  { tag: [t.tagName, t.meta, t.annotation], color: 'var(--syn-tag)' },
   { tag: t.url, color: 'var(--muted)' },
   { tag: t.processingInstruction, color: 'var(--muted)' },
 ])
@@ -378,7 +416,7 @@ export default function LiveEditor({ value, onChange, onWikiLink, placeholder })
           history(),
           drawSelection(),
           indentOnInput(),
-          markdown({ base: markdownLanguage }),
+          markdown({ base: markdownLanguage, codeLanguages: languages }),
           syntaxHighlighting(highlight),
           livePreview,
           EditorView.lineWrapping,

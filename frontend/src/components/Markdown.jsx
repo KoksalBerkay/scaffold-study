@@ -2,8 +2,36 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import rehypeHighlight from 'rehype-highlight'
+import { useRef, useState } from 'react'
 import 'katex/dist/katex.min.css'
 import { materialUrl } from '../api'
+
+const LANG_NAMES = { js: 'JavaScript', javascript: 'JavaScript', ts: 'TypeScript', typescript: 'TypeScript', py: 'Python', python: 'Python',
+  java: 'Java', c: 'C', cpp: 'C++', 'c++': 'C++', cs: 'C#', csharp: 'C#', go: 'Go', rust: 'Rust', rs: 'Rust', sql: 'SQL', bash: 'Bash', sh: 'Shell',
+  shell: 'Shell', zsh: 'Shell', json: 'JSON', yaml: 'YAML', yml: 'YAML', html: 'HTML', xml: 'XML', css: 'CSS', kotlin: 'Kotlin', swift: 'Swift',
+  php: 'PHP', ruby: 'Ruby', r: 'R', matlab: 'MATLAB', verilog: 'Verilog', vhdl: 'VHDL', asm: 'Assembly', x86asm: 'Assembly', armasm: 'Assembly',
+  md: 'Markdown', markdown: 'Markdown', plaintext: 'Text', text: 'Text' }
+
+function CodeBlock({ children, ...rest }) {
+  const ref = useRef(null)
+  const [copied, setCopied] = useState(false)
+  const code = Array.isArray(children) ? children[0] : children
+  const cls = code?.props?.className || ''
+  const lang = (cls.match(/language-([\w+#-]+)/) || [])[1]
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(ref.current?.innerText || ''); setCopied(true); setTimeout(() => setCopied(false), 1400) } catch (e) { /* no clipboard */ }
+  }
+  return (
+    <div className="codeblock">
+      <div className="codeblock-bar">
+        <span>{lang ? LANG_NAMES[lang.toLowerCase()] || lang : ''}</span>
+        <button type="button" onClick={copy}>{copied ? 'Copied' : 'Copy'}</button>
+      </div>
+      <pre ref={ref} {...rest}>{children}</pre>
+    </div>
+  )
+}
 
 /** Split YAML frontmatter off. Returns { body, meta, offset } where offset = lines removed. */
 export function splitFrontmatter(src = '') {
@@ -106,6 +134,9 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
         </li>
       )
     },
+    pre({ node, children, ...rest }) {
+      return <CodeBlock {...rest}>{children}</CodeBlock>
+    },
     table({ children }) {
       return <div className="table-wrap"><table>{children}</table></div>
     },
@@ -114,7 +145,7 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
     <div className={`md ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
-        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
+        rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }], [rehypeHighlight, { detect: false, ignoreMissing: true, aliases: { cpp: ['c++'], bash: ['sh', 'zsh', 'shell'] } }]]}
         urlTransform={(u) => u}
         components={components}
       >

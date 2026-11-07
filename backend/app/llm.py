@@ -20,7 +20,7 @@ from pathlib import Path
 
 import httpx
 
-from .config import load_settings
+from .config import WORKSPACE, load_settings
 
 PROVIDERS = {
     "codex": "ChatGPT subscription (Codex CLI)",
@@ -72,7 +72,8 @@ def _flatten(system: str, messages: list[dict]) -> str:
     """For CLI agents that take a single prompt."""
     parts = [
         "You are being used as a plain text-generation backend inside a study app. "
-        "Do not run shell commands, do not read or write files, do not browse. "
+        "Do not run shell commands, do not read or write files, do not use any tools, do not browse. "
+        "When asked to output files, print them as text in your reply. "
         "Everything you need is in this prompt and in the attached images. "
         "Output only the requested text, with no preamble.",
         "",
@@ -129,6 +130,8 @@ async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
         code, out, err = await _run(args, _flatten(system, messages), cwd=tmp)
         text = out_file.read_text() if out_file.exists() else ""
         if code != 0 or not text.strip():
+            (WORKSPACE / "logs").mkdir(parents=True, exist_ok=True)
+            (WORKSPACE / "logs" / "codex-last-failure.log").write_text(f"exit {code}\n--- stdout\n{out[-20000:]}\n--- stderr\n{err[-20000:]}")
             tail = (err or out).strip().splitlines()[-6:]
             raise LLMError("Codex failed: " + " | ".join(tail))
         return text
