@@ -265,9 +265,10 @@ if DIST.is_dir():
         if full_path.startswith("api/"):
             raise HTTPException(404, "Unknown API route")
         f = DIST / full_path
-        if full_path and f.is_file():
+        if full_path and f.is_file() and f.name != "index.html":
             return FileResponse(f)
-        return FileResponse(DIST / "index.html")
+        # never cache the page itself: after a rebuild every window must get the new asset names
+        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 # ---------------- demo data ----------------

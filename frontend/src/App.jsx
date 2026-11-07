@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap,
+  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap, Menu, X,
 } from 'lucide-react'
 import { api, apiRetry, isBusy } from './api'
 import { ToastProvider, useToast } from './components/ui'
@@ -32,6 +32,8 @@ function Shell() {
   const [chats, setChats] = useState([])
   const [pending, setPending] = useState(null) // first message for a new chat
   const [models, setModels] = useState(null)
+  const [navOpen, setNavOpen] = useState(false)
+  useEffect(() => { setNavOpen(false) }, [route.view, route.arg])
 
   useEffect(() => {
     const on = () => setRoute(readRoute())
@@ -99,7 +101,11 @@ function Shell() {
 
   const tutor = models?.roles?.tutor
   return (
-    <div className="app">
+    <div className={`app ${navOpen ? 'nav-open' : ''}`}>
+      <button className="menu-toggle icon-btn" onClick={() => setNavOpen(!navOpen)} aria-label={navOpen ? 'Close menu' : 'Open menu'}>
+        {navOpen ? <X size={18} /> : <Menu size={18} />}
+      </button>
+      {navOpen && <div className="nav-scrim" onClick={() => setNavOpen(false)} />}
       <aside className="sidebar">
         <div className="brand">
           <span className="logo"><GraduationCap size={18} /></span>
