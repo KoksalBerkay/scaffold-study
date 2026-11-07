@@ -8,9 +8,13 @@ import { EditorState, StateField } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, keymap, drawSelection, placeholder as phExt } from '@codemirror/view'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
-import { syntaxTree, syntaxHighlighting, HighlightStyle, indentOnInput } from '@codemirror/language'
+
+// Preload the most common languages so code blocks are coloured on first render
+const COMMON = ['SQL', 'Python', 'Java', 'C', 'C++', 'JavaScript', 'TypeScript', 'Shell', 'JSON', 'Go', 'Rust', 'Verilog', 'VHDL']
+languages.filter((l) => COMMON.includes(l.name)).forEach((l) => l.load().catch(() => {}))
+import { syntaxTree, syntaxHighlighting, indentOnInput } from '@codemirror/language'
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands'
-import { tags as t } from '@lezer/highlight'
+import { classHighlighter } from '@lezer/highlight'
 import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
@@ -239,7 +243,7 @@ function build(state) {
             const lang = (open.text.match(/^\s*(?:```|~~~)\s*([\w+#-]*)/) || [])[1] || ''
             const code = doc.sliceString(open.to + 1, close.from > open.to ? close.from - 1 : open.to)
             add(open.from, open.to, Decoration.replace({ widget: new CodeLabelWidget(lang, code) }))
-            if (close.from !== open.from && /^\s*(```|~~~)\s*$/.test(close.text)) add(close.from, close.to, hide)
+            if (close.from !== open.from && /^\s*(```|~~~)\s*$/.test(close.text)) { add(close.from, close.to, hide); add(close.from, close.from, line('lp-fence-hidden')) }
           }
           for (let p = from; p <= to;) {
             const l = lineOf(p)
@@ -375,20 +379,6 @@ const livePreview = StateField.define({
   provide: (f) => EditorView.decorations.from(f),
 })
 
-const highlight = HighlightStyle.define([
-  { tag: t.monospace, fontFamily: 'var(--mono)' },
-  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: 'var(--syn-keyword)' },
-  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: 'var(--syn-string)' },
-  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: 'var(--syn-comment)', fontStyle: 'italic' },
-  { tag: [t.number, t.bool, t.null, t.atom], color: 'var(--syn-number)' },
-  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: 'var(--syn-function)' },
-  { tag: [t.typeName, t.className, t.namespace, t.standard(t.typeName)], color: 'var(--syn-type)' },
-  { tag: [t.propertyName, t.attributeName], color: 'var(--syn-property)' },
-  { tag: [t.operator, t.punctuation, t.bracket], color: 'var(--syn-punct)' },
-  { tag: [t.tagName, t.meta, t.annotation], color: 'var(--syn-tag)' },
-  { tag: t.url, color: 'var(--muted)' },
-  { tag: t.processingInstruction, color: 'var(--muted)' },
-])
 
 const theme = EditorView.theme({
   '&': { fontSize: '16px', color: 'var(--text)', backgroundColor: 'transparent' },
@@ -417,7 +407,7 @@ export default function LiveEditor({ value, onChange, onWikiLink, placeholder })
           drawSelection(),
           indentOnInput(),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
-          syntaxHighlighting(highlight),
+          syntaxHighlighting(classHighlighter),
           livePreview,
           EditorView.lineWrapping,
           keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),

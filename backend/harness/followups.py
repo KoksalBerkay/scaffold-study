@@ -76,6 +76,8 @@ async def judge(sc: dict, turn: dict) -> dict:
     data = chat.parse_json(out) or {}
     if step["kind"] == "correct":
         data["gave_answer_early"] = False
+    if step["kind"] != "wrong_attempt":
+        data["found_first_error"] = None  # only meaningful when the student sent an attempt
     return data
 
 
@@ -109,7 +111,8 @@ def report(results: list[dict]) -> str:
         line("Ended with one clear next step", "one_clear_next_step", pct),
         line("Prerequisites taught (1–5)", "taught_prerequisites", avg),
         "",
-        f"{len(results) // 2} scenarios × {len(results[0]['grades']) if results else 0} follow-ups, each run with the Reviewer off and on.",
+        f"{len(results) // 2} scenarios × {len(results[0]['grades']) if results else 0} follow-ups, each run with the Reviewer off and on. "
+        "Small sample from a single run: read it as a direction, not a precise measurement.",
         "",
     ]
     catches = []
@@ -160,5 +163,20 @@ async def main():
     print("\nReport: notes/Evaluation/Reviewer Follow-up Test.md")
 
 
+def rebuild(json_path: str, note: str):
+    """Regenerate a report from a saved run (applies the current scoring rules)."""
+    results = json.loads(Path(json_path).read_text())
+    for r in results:
+        for t, g in zip(r["turns"], r["grades"]):
+            if t["step"]["kind"] != "wrong_attempt":
+                g["found_first_error"] = None
+            if t["step"]["kind"] == "correct":
+                g["gave_answer_early"] = False
+    write_note(note, report(results))
+
+
 if __name__ == "__main__":
-    asyncio.run(main())
+    if sys.argv[1:2] == ["--rebuild"]:
+        rebuild(sys.argv[2], sys.argv[3])
+    else:
+        asyncio.run(main())

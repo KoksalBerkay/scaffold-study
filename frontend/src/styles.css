@@ -577,3 +577,19 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .pitch.compact { padding: 12px 16px; margin-bottom: 18px; }
 .pitch.compact p { font-size: 14px; margin-top: 6px; }
 .chat-empty .pitch { max-width: 640px; margin: 6px 0 0; }
+.md code, .md pre, .live-editor .lp-codeblock, .live-editor .lp-code { font-variant-ligatures: none; font-feature-settings: "liga" 0, "calt" 0; }
+.live-editor .lp-fence-hidden { line-height: 0.5; font-size: 8px; }
+.tree-item svg, .tree-folder svg { flex: none; }
+.tree-item { align-items: flex-start; }
+.tree-item svg { margin-top: 3px; }
+/* CodeMirror tokens (classHighlighter) inside code blocks */
+.live-editor .lp-codeblock .tok-keyword, .live-editor .lp-codeblock .tok-modifier { color: var(--syn-keyword); }
+.live-editor .lp-codeblock .tok-string, .live-editor .lp-codeblock .tok-string2 { color: var(--syn-string); }
+.live-editor .lp-codeblock .tok-comment { color: var(--syn-comment); font-style: italic; }
+.live-editor .lp-codeblock .tok-number, .live-editor .lp-codeblock .tok-bool, .live-editor .lp-codeblock .tok-atom, .live-editor .lp-codeblock .tok-literal { color: var(--syn-number); }
+.live-editor .lp-codeblock .tok-function, .live-editor .lp-codeblock .tok-macroName { color: var(--syn-function); }
+.live-editor .lp-codeblock .tok-typeName, .live-editor .lp-codeblock .tok-className, .live-editor .lp-codeblock .tok-namespace { color: var(--syn-type); }
+.live-editor .lp-codeblock .tok-propertyName, .live-editor .lp-codeblock .tok-attributeName { color: var(--syn-property); }
+.live-editor .lp-codeblock .tok-operator, .live-editor .lp-codeblock .tok-punctuation { color: var(--syn-punct); }
+.live-editor .lp-codeblock .tok-meta, .live-editor .lp-codeblock .tok-tagName { color: var(--syn-tag); }
+.live-editor .lp-codeblock .tok-variableName.tok-definition { color: var(--syn-function); }
