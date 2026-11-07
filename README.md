@@ -54,6 +54,18 @@ cd frontend && npm run dev
 ```
 </details>
 
+## 🎬 Demo data
+
+No materials at hand? In the planner, click **Load the demo semester**, or **Load demo notes** in Notes. You get 3 courses of synthetic past exams (`demo-materials/`), finished notes for each course, a pre-built study plan, and the Reviewer test reports. Nothing you already have is overwritten.
+
+## 🧪 Does the Reviewer actually help?
+
+```bash
+cd backend && .venv/bin/python -m harness.followups
+```
+
+This runs scripted student conversations through the real app, with the Reviewer **off** and **on**: start from zero → "just tell me the answer" → a wrong attempt → "you skipped why" → the correct answer. A judge agent grades every tutor reply (gave the answer early? found the first wrong step? taught the prerequisites? one clear next step?). The report is written to `notes/Evaluation/Reviewer Follow-up Test.md`.
+
 ## 🧭 Architecture
 
 ```
