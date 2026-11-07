@@ -21,6 +21,11 @@ from app.files import write_note
 
 HERE = Path(__file__).parent
 ROOT = HERE.parents[1]
+TEST_RUNS = ROOT / "test-runs"  # gitignored; test chats never show up in the app
+
+# Keep test conversations out of the user's workspace (and out of the UI)
+chat.CHATS = TEST_RUNS / "chats"
+chat.FOLDERS_FILE = chat.CHATS / "folders.json"
 
 EXPECT = {
     "start": "Teach the prerequisites from zero, anchored to the exercise. Must NOT give the final answer or do the student's next step. End with one clear step for the student.",
@@ -156,7 +161,7 @@ async def main():
     for (sc, rv), turns in zip(jobs, convos):
         grades = await asyncio.gather(*(judge(sc, t) for t in turns))
         results.append({"scenario": sc["id"], "review": rv, "turns": turns, "grades": grades})
-    out = WORKSPACE / "harness"
+    out = TEST_RUNS / "results"
     out.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M")
     (out / f"followups-{stamp}.json").write_text(json.dumps(results, indent=2, ensure_ascii=False))
