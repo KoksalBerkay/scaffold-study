@@ -17,7 +17,7 @@ if [ ! -d backend/.venv ]; then
 fi
 uv pip install -q -p backend/.venv/bin/python -r backend/requirements.txt
 if [ ! -d frontend/node_modules ]; then (cd frontend && npm install); fi
-if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then (cd frontend && npx vite build >/dev/null); fi
+if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then scripts/build-frontend.sh; fi
 [ -d demo-materials ] || backend/.venv/bin/python backend/make_demo_materials.py
 cd backend
 if [ "$APP" = 1 ]; then

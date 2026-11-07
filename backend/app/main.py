@@ -9,7 +9,6 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 from . import llm, materials, planner
 from .config import (PROMPT_NAMES, ROOT, WORKSPACE, default_prompt, get_memory, get_prompt,
@@ -264,80 +263,30 @@ except ImportError:
 
 # ---------------- frontend ----------------
 DIST = ROOT / "frontend" / "dist"
-if DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
-
-    @app.get("/{full_path:path}")
-    def spa(full_path: str):
-        if full_path.startswith("api/"):
-            raise HTTPException(404, "Unknown API route")
-        f = DIST / full_path
-        if full_path and f.is_file() and f.name != "index.html":
-            return FileResponse(f)
-        # never cache the page itself: after a rebuild every window must get the new asset names
-        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
+UPDATING_PAGE = """<!doctype html><html><head><meta charset="utf-8"><title>Scaffold</title>
+<meta http-equiv="refresh" content="2"><style>body{margin:0;height:100vh;display:grid;place-items:center;
+background:#0e1015;color:#8b93a3;font:15px Inter,system-ui,sans-serif}</style></head>
+<body><div>Scaffold is updating… this page reloads by itself.</div></body></html>"""
 
 
-# ---------------- demo data ----------------
-@app.post("/api/demo/seed")
-def seed_demo(body: dict = Body(default={})):
-    """Copy pre-made demo notes and a backup study plan into the notes folder (never overwrites)."""
-    src = ROOT / "demo-notes"
-    mats = ROOT / "demo-materials"
-    if not src.is_dir():
-        raise HTTPException(404, "No demo-notes folder")
-    root = notes_dir()
-    written, skipped = [], []
-    for f in sorted(src.rglob("*.md")):
-        rel = f.relative_to(src)
-        dst = root / rel
-        if dst.exists() and not body.get("overwrite"):
-            skipped.append(str(rel))
-            continue
-        text = (f.read_text().replace("file://{{DEMO_MATERIALS}}", mats.resolve().as_uri())
-                .replace("{{DEMO_MATERIALS_PATH}}", str(mats.resolve())))
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_text(text)
-        written.append(str(rel))
-    chats_added = _seed_demo_chats(mats)
-    s = load_settings()
-    if not s.get("materials_path"):
-        s["materials_path"] = str(mats)
-        save_settings(s)
-    if not planner.setup_path().exists() and (src / "planner_setup.json").exists():
-        setup = json.loads((src / "planner_setup.json").read_text())
-        setup["materials_path"] = str(mats)
-        planner.setup_path().write_text(json.dumps(setup, indent=2))
-    return {"written": written, "skipped": skipped, "chats": chats_added}
+@app.get("/assets/{name:path}")
+def asset(name: str):
+    f = (DIST / "assets" / name).resolve()
+    if (DIST / "assets").resolve() not in f.parents or not f.is_file():
+        raise HTTPException(404)
+    return FileResponse(f, headers={"Cache-Control": "public, max-age=31536000, immutable"})
 
 
-def _seed_demo_chats(mats: Path) -> int:
-    from . import chat as chatmod
-    src = ROOT / "demo-chats"
-    if not (src / "chats").is_dir():
-        return 0
-    up_dst = chatmod.UPLOADS
-    up_dst.mkdir(parents=True, exist_ok=True)
-    for f in (src / "uploads").glob("*") if (src / "uploads").is_dir() else []:
-        if not (up_dst / f.name).exists():
-            shutil.copy(f, up_dst / f.name)
-    demo_folders = json.loads((src / "chats" / "folders.json").read_text()) if (src / "chats" / "folders.json").exists() else []
-    remap = {f["id"]: chatmod.ensure_folder(f["name"]) for f in demo_folders}
-
-    def fill(text: str) -> str:
-        return (text.replace("file://{{DEMO_MATERIALS}}", mats.resolve().as_uri())
-                .replace("{{DEMO_MATERIALS_PATH}}", str(mats.resolve()))
-                .replace("{{UPLOADS}}", str(up_dst.resolve())))
-    added = 0
-    for d in sorted((src / "chats").iterdir()):
-        if not d.is_dir() or (chatmod.CHATS / d.name).exists():
-            continue
-        dst = chatmod.CHATS / d.name
-        dst.mkdir(parents=True)
-        for f in d.iterdir():
-            (dst / f.name).write_text(fill(f.read_text()))
-        meta = json.loads((dst / "meta.json").read_text())
-        meta["folder"] = remap.get(meta.get("folder"))
-        (dst / "meta.json").write_text(json.dumps(meta, indent=2))
-        added += 1
-    return added
+@app.get("/{full_path:path}")
+def spa(full_path: str):
+    from fastapi.responses import HTMLResponse
+    if full_path.startswith("api/"):
+        raise HTTPException(404, "Unknown API route")
+    f = DIST / full_path
+    if full_path and f.is_file() and f.name != "index.html":
+        return FileResponse(f)
+    index = DIST / "index.html"
+    if not index.is_file():  # mid-build or not built yet: never show an error page that can't recover
+        return HTMLResponse(UPDATING_PAGE, headers={"Cache-Control": "no-store"})
+    # never cache the page itself: after a rebuild every window must get the new asset names
+    return FileResponse(index, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

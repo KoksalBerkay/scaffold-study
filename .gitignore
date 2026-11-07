@@ -7,3 +7,5 @@ frontend/dist/
 .DS_Store
 test-runs/
 Scaffold.app/
+frontend/dist-next/
+frontend/dist-old/
