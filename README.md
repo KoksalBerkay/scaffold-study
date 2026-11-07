@@ -91,3 +91,7 @@ notes/Study Plan/
   Time Estimates.md  exam anchors, per-question estimates with reasons, does-it-fit, calibration
   Context.md         material inventory, exam rules, preferences, unknowns, dated updates
 ```
+
+## 📄 License
+
+[MIT](LICENSE): free to use, modify and share.
