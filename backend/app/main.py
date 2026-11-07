@@ -238,3 +238,35 @@ if DIST.is_dir():
         if full_path and f.is_file():
             return FileResponse(f)
         return FileResponse(DIST / "index.html")
+
+
+# ---------------- demo data ----------------
+@app.post("/api/demo/seed")
+def seed_demo(body: dict = Body(default={})):
+    """Copy pre-made demo notes and a backup study plan into the notes folder (never overwrites)."""
+    src = ROOT / "demo-notes"
+    mats = ROOT / "demo-materials"
+    if not src.is_dir():
+        raise HTTPException(404, "No demo-notes folder")
+    root = notes_dir()
+    written, skipped = [], []
+    for f in sorted(src.rglob("*.md")):
+        rel = f.relative_to(src)
+        dst = root / rel
+        if dst.exists() and not body.get("overwrite"):
+            skipped.append(str(rel))
+            continue
+        text = (f.read_text().replace("file://{{DEMO_MATERIALS}}", mats.resolve().as_uri())
+                .replace("{{DEMO_MATERIALS_PATH}}", str(mats.resolve())))
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(text)
+        written.append(str(rel))
+    s = load_settings()
+    if not s.get("materials_path"):
+        s["materials_path"] = str(mats)
+        save_settings(s)
+    if not planner.setup_path().exists() and (src / "planner_setup.json").exists():
+        setup = json.loads((src / "planner_setup.json").read_text())
+        setup["materials_path"] = str(mats)
+        planner.setup_path().write_text(json.dumps(setup, indent=2))
+    return {"written": written, "skipped": skipped}

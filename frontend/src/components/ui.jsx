@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
-import { Folder, ChevronUp, X, Check, AlertTriangle, Info, Loader2 } from 'lucide-react'
+import { Folder, ChevronUp, X, Check, AlertTriangle, Info, Loader2, CalendarCheck, GraduationCap, ShieldCheck, NotebookText, ChevronRight } from 'lucide-react'
 import { api } from '../api'
 
 /* ---------- Toasts ---------- */
@@ -137,6 +137,32 @@ export function Segmented({ options, value, onChange, small }) {
           </button>
         )
       })}
+    </div>
+  )
+}
+
+/* ---------- Two-sentence pitch ---------- */
+const FLOW = [
+  { icon: CalendarCheck, label: 'Plan' },
+  { icon: GraduationCap, label: 'Teach' },
+  { icon: ShieldCheck, label: 'Review' },
+  { icon: NotebookText, label: 'Notes' },
+]
+export function Pitch({ compact }) {
+  return (
+    <div className={`pitch ${compact ? 'compact' : ''}`}>
+      <div className="pitch-flow" aria-hidden="true">
+        {FLOW.map((f, i) => (
+          <span key={f.label} className="pitch-step">
+            <f.icon size={14} /> {f.label}
+            {i < FLOW.length - 1 && <ChevronRight size={13} className="pitch-arrow" />}
+          </span>
+        ))}
+      </div>
+      <p>
+        Scaffold <b>plans your semester from your real past exams</b> and <b>teaches you step by step</b>, without handing you the answer.
+        {' '}A second AI <b>reviews every lesson before you see it</b>, and everything you learn becomes <b>clean notes you keep</b>.
+      </p>
     </div>
   )
 }

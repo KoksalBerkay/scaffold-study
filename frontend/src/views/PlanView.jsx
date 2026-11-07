@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { api, stream } from '../api'
 import Markdown, { splitFrontmatter } from '../components/Markdown'
-import { FolderPicker, JobProgress, Modal, Segmented, useToast } from '../components/ui'
+import { FolderPicker, JobProgress, Modal, Pitch, Segmented, useToast } from '../components/ui'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 const CONFIDENCE = [
@@ -33,7 +33,7 @@ function isoDate(d) { return d.toISOString().slice(0, 10) }
 function addDays(iso, n) { const d = new Date(iso); d.setDate(d.getDate() + n); return isoDate(d) }
 
 /* ================= Wizard ================= */
-function Wizard({ initial, onGenerate, onCancel }) {
+function Wizard({ initial, onGenerate, onCancel, onDemo }) {
   const toast = useToast()
   const [step, setStep] = useState(0)
   const [picker, setPicker] = useState(false)
@@ -75,7 +75,7 @@ function Wizard({ initial, onGenerate, onCancel }) {
   return (
     <div className="wizard">
       <div className="wizard-head">
-        <div className="eyebrow">Study planner</div>
+        <Pitch />
         <h1>Let's build a plan you can actually follow.</h1>
         <p className="muted">The planner reads every file in your materials, estimates the time each question really takes, and writes your plan as notes you keep.</p>
       </div>
@@ -99,6 +99,9 @@ function Wizard({ initial, onGenerate, onCancel }) {
               <div className={`folder-path ${s.materials_path ? '' : 'empty'}`}>{s.materials_path || 'No folder selected'}</div>
               <button className="btn primary" onClick={() => setPicker(true)}><FolderOpen size={16} /> {s.materials_path ? 'Change' : 'Choose folder'}</button>
             </div>
+            {!s.materials_path && onDemo && (
+              <p className="muted small">No materials at hand? <button className="link" onClick={onDemo}>Load the demo semester</button> with a ready-made plan and notes.</p>
+            )}
             {scanning && <p className="muted small">Scanning…</p>}
             {scan && (
               <div className="course-grid">
@@ -293,13 +296,20 @@ export default function PlanView({ onStudy }) {
   }
 
   if (!hasPlan || mode === 'wizard') {
-    return <Wizard initial={state.setup} onGenerate={generate} onCancel={hasPlan ? () => setMode('view') : null} />
+    const demo = async () => {
+      const r = await api('/api/demo/seed', { method: 'POST', body: {} })
+      await load()
+      setMode('view')
+      toast({ kind: 'success', text: `Demo semester loaded (${r.written.length} files).` })
+    }
+    return <Wizard initial={state.setup} onGenerate={generate} onCancel={hasPlan ? () => setMode('view') : null} onDemo={demo} />
   }
 
   const pct = progress.all ? Math.round((100 * progress.done) / progress.all) : 0
 
   return (
     <div className="plan">
+      <Pitch compact />
       <header className="page-head">
         <div>
           <div className="eyebrow">Study plan {meta.updated && <span className="muted">· updated {meta.updated}</span>}</div>

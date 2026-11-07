@@ -562,3 +562,18 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .live-editor .lp-code-label { float: right; display: inline-flex; gap: 8px; align-items: center; font-family: var(--font); font-size: 11.5px; color: var(--muted); }
 .live-editor .lp-code-label button { border: 1px solid var(--border); background: var(--panel); color: var(--text-2); border-radius: 6px; padding: 0 8px; font-size: 11px; opacity: 0; cursor: pointer; }
 .live-editor .lp-codeblock.first:hover .lp-code-label button, .live-editor .lp-code-label:hover button { opacity: 1; }
+
+/* ============ Pitch ============ */
+.pitch { position: relative; padding: 16px 20px; margin-bottom: 22px; border-radius: 14px; background:
+  linear-gradient(var(--panel), var(--panel)) padding-box,
+  linear-gradient(120deg, color-mix(in srgb, var(--accent) 70%, transparent), color-mix(in srgb, var(--ok) 60%, transparent)) border-box;
+  border: 1px solid transparent; text-align: left; }
+.pitch p { margin: 8px 0 0; font-size: 15px; line-height: 1.6; color: var(--text-2); }
+.pitch p b { color: var(--text); font-weight: 600; }
+.pitch-flow { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; font-weight: 600; letter-spacing: 0.02em; }
+.pitch-step { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
+.pitch-step:nth-child(3), .pitch-step:nth-child(4) { color: var(--ok); }
+.pitch-arrow { color: var(--muted); margin: 0 2px; }
+.pitch.compact { padding: 12px 16px; margin-bottom: 18px; }
+.pitch.compact p { font-size: 14px; margin-top: 6px; }
+.chat-empty .pitch { max-width: 640px; margin: 6px 0 0; }

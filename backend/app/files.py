@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .config import notes_dir
 
-FILE_BLOCK = re.compile(r"<<<FILE\s+(.+?)\s*\n(.*?)\nFILE>>>", re.S)
+FILE_BLOCK = re.compile(r"<<<FILE\s+(.+?)\s*\n(.*?)(?:\nFILE>>>|(?=\n<<<FILE)|\Z)", re.S)
 
 
 def parse_file_blocks(text: str) -> list[tuple[str, str]]:

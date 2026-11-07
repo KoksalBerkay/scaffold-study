@@ -48,7 +48,7 @@ The script creates the Python env, installs the frontend packages, builds the UI
 
 ```bash
 # terminal 1: backend
-cd backend && .venv/bin/python -m uvicorn app.main:app --port 8765 --reload
+cd backend && .venv/bin/python -m uvicorn app.main:app --port 8765 --reload --timeout-graceful-shutdown 2
 # terminal 2: frontend on http://localhost:5173 (proxies /api to the backend)
 cd frontend && npm run dev
 ```

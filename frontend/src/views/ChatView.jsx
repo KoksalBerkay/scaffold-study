@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { api, stream, upload } from '../api'
 import Markdown from '../components/Markdown'
-import { Modal, useToast } from '../components/ui'
+import { Modal, Pitch, useToast } from '../components/ui'
 
 const STAGES = [
   { id: 'context', label: 'Reading your materials' },
@@ -262,9 +262,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       <div className="messages" ref={listRef}>
         {empty && (
           <div className="chat-empty">
-            <div className="pulse-orb still"><Sparkles size={22} /></div>
             <h1>What are we studying?</h1>
-            <p className="muted">I'll teach you from zero using your own materials, one step at a time. I won't just hand you the answer.</p>
+            <Pitch />
             <div className="starter-grid">
               <button className="starter" onClick={() => taRef.current?.focus()}>
                 <ClipboardPaste size={18} /><b>Paste a screenshot</b><span className="muted small">of an exam question. Press ⌘V in the box below.</span>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { FileText, Folder, BookOpen, PencilLine, Search, Check, Loader2, FilePlus } from 'lucide-react'
+import { FileText, Folder, BookOpen, PencilLine, Search, Check, Loader2, FilePlus, Sparkles } from 'lucide-react'
 import { api } from '../api'
 import Markdown, { Properties, splitFrontmatter } from '../components/Markdown'
 import LiveEditor from '../components/LiveEditor'
@@ -103,6 +103,11 @@ export default function NotesView({ initial }) {
             ))}
           </div>
         ))}
+        <button className="btn small ghost" onClick={async () => {
+          const r = await api('/api/demo/seed', { method: 'POST', body: {} })
+          await loadTree()
+          toast({ kind: 'success', text: r.written.length ? `Loaded ${r.written.length} demo notes.` : 'Demo notes are already loaded.' })
+        }}><Sparkles size={14} /> Load demo notes</button>
         {tree && <p className="muted tiny pad mono" title={tree.root}>{tree.root}</p>}
       </div>
       <div className="notes-view">

@@ -1,0 +1,36 @@
+{
+  "materials_path": "{{DEMO_MATERIALS_PATH}}",
+  "start": "2026-11-09",
+  "end": "2027-01-10",
+  "hours_per_day": 3,
+  "days": [
+    "Mon",
+    "Tue",
+    "Wed",
+    "Thu",
+    "Fri",
+    "Sat"
+  ],
+  "session_minutes": 90,
+  "courses": [
+    {
+      "name": "Linear Algebra",
+      "exam_date": "2027-01-20",
+      "credits": 8,
+      "confidence": "partly known"
+    },
+    {
+      "name": "Databases",
+      "exam_date": "2027-01-27",
+      "credits": 8,
+      "confidence": "never seen it"
+    },
+    {
+      "name": "Physics II",
+      "exam_date": "",
+      "credits": 10,
+      "confidence": "never seen it"
+    }
+  ],
+  "preferences": "Past exams newest first. Two sessions a day."
+}

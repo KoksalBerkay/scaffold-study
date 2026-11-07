@@ -101,6 +101,8 @@ def list_chats():
             m = d / "meta.json"
             if m.exists():
                 meta = json.loads(m.read_text())
+                if meta.get("harness"):
+                    continue
                 out.append({k: meta.get(k) for k in ("id", "title", "updated", "created", "task")})
     return sorted(out, key=lambda x: -(x["updated"] or 0))
 
@@ -109,7 +111,7 @@ def list_chats():
 def create_chat(body: dict = Body(default={})):
     cid = uuid.uuid4().hex[:12]
     meta = {"id": cid, "title": body.get("title") or "", "created": time.time(), "task": body.get("task"),
-            "pinned_files": body.get("pinned_files") or [], "notes_touched": []}
+            "pinned_files": body.get("pinned_files") or [], "notes_touched": [], "harness": bool(body.get("harness"))}
     save_meta(meta)
     return meta
 
@@ -368,9 +370,11 @@ def parse_json(text: str) -> dict | None:
 
 # ---------------- the main loop ----------------
 
-async def tutor_turn(cid: str, body: dict):
+async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True):
     meta = load_meta(cid)
     settings = load_settings()
+    if review is not None:
+        settings["review"] = review
     text = (body.get("text") or "").strip()
     atts = body.get("attachments") or []
     extra_text, images = expand_attachments(atts)
@@ -446,7 +450,7 @@ async def tutor_turn(cid: str, body: dict):
                 break
             fb = "\n".join(f"- [{i.get('type')}] {i.get('where', '')}: {i.get('fix', '')}" for i in issues)
             convo2 = convo + [{"role": "assistant", "content": draft},
-                              {"role": "user", "content": "REVIEWER FEEDBACK. Fix every point and return the full revised message for the student, nothing else:\n" + fb}]
+                              {"role": "user", "content": "REVIEWER FEEDBACK. Fix every point and return the full revised message for the student, nothing else. Keep all correct teaching from your draft; change only what the points require. Never reveal a result the student has not produced yet:\n" + fb}]
             async for ev in with_heartbeat(llm.complete("tutor", system, convo2), "revising", f"Fixing {len(issues)} issue{'s' if len(issues) != 1 else ''} the reviewer found"):
                 if isinstance(ev, tuple):
                     draft = TOOL_RE.sub("", ev[1]).strip()
@@ -461,7 +465,8 @@ async def tutor_turn(cid: str, body: dict):
     save_meta(meta)
     yield {"type": "message", "message": asst}
 
-    asyncio.create_task(background(cid, user_msg, asst))
+    if background_jobs:
+        asyncio.create_task(background(cid, user_msg, asst))
 
 
 # ---------------- background agents ----------------

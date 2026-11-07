@@ -35,7 +35,13 @@ async def course(name: str):
                            for p in sorted(root.rglob("*.pdf")))
     out = await llm.complete("background", render_prompt("notetaker"),
                              [{"role": "user", "content": ASK.format(course=name, topic=TOPICS[name], material=material)}])
-    for path, content in parse_file_blocks(out):
+    raw = ROOT / "workspace" / "logs" / f"demo-notes-{name}.txt"
+    raw.parent.mkdir(parents=True, exist_ok=True)
+    raw.write_text(out)
+    blocks = parse_file_blocks(out)
+    if not blocks:
+        print("no FILE blocks for", name, "- raw output in", raw)
+    for path, content in blocks:
         rel = path[len("notes/"):] if path.startswith("notes/") else path
         dst = OUT / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
