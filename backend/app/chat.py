@@ -23,6 +23,8 @@ router = APIRouter()
 CHATS = WORKSPACE / "chats"
 UPLOADS = WORKSPACE / "uploads"
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+TEXT_EXT = {".md", ".txt", ".csv", ".tex", ".py", ".java", ".c", ".h", ".cpp", ".hpp", ".js", ".ts", ".sql", ".json",
+            ".yaml", ".yml", ".html", ".css", ".sh", ".m", ".r", ".go", ".rs", ".kt", ".swift", ".v", ".vhd", ".asm", ".s"}
 COMPACT_CHARS = 40_000
 KEEP_TURNS = 6
 
@@ -240,7 +242,7 @@ def delete_chat(cid: str):
 
 def _upload_record(uid: str, name: str, path: Path) -> dict:
     ext = path.suffix.lower()
-    kind = "image" if ext in IMAGE_EXT else ("pdf" if ext == ".pdf" else "text")
+    kind = "image" if ext in IMAGE_EXT else ("pdf" if ext == ".pdf" else ("text" if ext in TEXT_EXT else "file"))
     return {"id": uid, "name": name, "kind": kind, "url": f"/api/uploads/{uid}"}
 
 
@@ -318,8 +320,11 @@ def expand_attachments(atts: list[dict]) -> tuple[str, list[str]]:
                     images.append(str(materials.render_page(p, i)))
                 except Exception:
                     break
-        else:
+        elif ext in TEXT_EXT:
             text_parts.append(f"[Attached file: {name}]\n{p.read_text(errors='replace')[:15000]}")
+        else:
+            text_parts.append(f"[Attached file: {name}. This file type cannot be read here. "
+                              "Tell the student to export it as PDF or paste a screenshot.]")
     return "\n\n".join(text_parts), images
 
 
@@ -361,12 +366,13 @@ def _rel(root: Path | None, link: str) -> str | None:
         return None
 
 
-def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str]]:
+def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list[str]]:
     """Returns (context for the tutor, material excerpt for the reviewer, what was found, for the activity log)."""
     root = materials_dir()
     parts = [f"Today is {today_str()}."]
     material_used = []
     found: list[str] = []
+    extra_images: list[str] = []
 
     if meta.get("task"):
         parts.append(f"## This chat was started from a study-plan task\n{meta['task']}")
@@ -374,6 +380,15 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str]]:
         rel = _rel(root, link)
         if rel:
             text = materials.read_pages(root / rel, None, max_chars=12000)
+            if not materials.has_text(root / rel):
+                # scanned PDF: give the tutor the first pages as images instead of empty text
+                for pg in (1, 2, 3):
+                    try:
+                        extra_images.append(str(materials.render_page(root / rel, pg)))
+                    except Exception:
+                        break
+                text = f"(Scanned PDF without a text layer: its first {len(extra_images)} pages are attached as images.)"
+                found.append(f"{Path(rel).name} is a scan: reading its pages as images")
             block = f"## Pinned material: {rel}\n{text}"
             parts.append(block)
             material_used.append(block)
@@ -417,7 +432,7 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str]]:
     if not found:
         found.append("No materials folder yet: teaching from the conversation only")
 
-    return "\n\n".join(parts), "\n\n".join(material_used), found
+    return "\n\n".join(parts), "\n\n".join(material_used), found, extra_images
 
 
 async def run_tool(name: str, args: dict) -> tuple[str, list[str]]:
@@ -529,9 +544,12 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
     yield {"type": "status", "stage": "context", "detail": "Reading your materials, notes and plan"}
     if images:
         yield act("context", f"Received {len(images)} image{'s' if len(images) > 1 else ''}; the tutor will read {'them' if len(images) > 1 else 'it'}")
-    context, material_used, found = await asyncio.to_thread(build_context, meta, text)
+    context, material_used, found, extra_images = await asyncio.to_thread(build_context, meta, text)
     for f in found:
         yield act("context", f)
+    if extra_images:
+        user_msg = {**user_msg, "image_paths": (user_msg.get("image_paths") or []) + extra_images}
+        images = (images or []) + extra_images
     system = render_prompt("tutor") + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
     convo = history_for_model(cid, prior + [user_msg])
 

@@ -145,6 +145,11 @@ def inventory_text(root: Path, courses: list[dict], include: set[str] | None = N
         files = exams + [f for f in files if f["kind"] != "exam"]
         for f in files:
             meta = [f"type: {f['kind']}", f"pages: {f['pages']}"]
+            pages_text = extract_pages(Path(f["path"]))
+            if f["path"].lower().endswith(".pdf") and not pages_text:
+                meta.append("COULD NOT OPEN (corrupt or protected PDF)")
+            elif f["path"].lower().endswith(".pdf") and not any(t.strip() for t in pages_text):
+                meta.append("SCANNED: no text layer, content unknown (the tutor can view the pages as images)")
             if f["date"]:
                 meta.append(f"date: {f['date']}")
             if f["questions"]:
@@ -216,14 +221,27 @@ def read_pages(path: Path, pages: str | None, max_chars: int = 12000) -> str:
     return "\n\n".join(out)[:max_chars]
 
 
+def has_text(path: Path) -> bool:
+    return any(t.strip() for t in extract_pages(path))
+
+
 def render_page(path: Path, page: int, zoom: float = 2.0) -> Path:
     if path.suffix.lower() in IMAGE_EXT:
         return path
+    if path.suffix.lower() != ".pdf":
+        raise ValueError("Only PDF pages and images can be shown as images.")
     h = hashlib.sha1(f"{path}|{path.stat().st_mtime}|{page}|{zoom}".encode()).hexdigest()[:16]
     out = WORKSPACE / "cache" / "pages" / f"{h}.png"
     if not out.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
-        with fitz.open(path) as doc:
-            pix = doc[page - 1].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-            pix.save(out)
+        try:
+            with fitz.open(path) as doc:
+                if not 1 <= page <= len(doc):
+                    raise ValueError(f"{path.name} has {len(doc)} pages; there is no page {page}.")
+                pix = doc[page - 1].get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+                pix.save(out)
+        except ValueError:
+            raise
+        except Exception:
+            raise ValueError(f"{path.name} could not be opened. It may be corrupt or password-protected.")
     return out
