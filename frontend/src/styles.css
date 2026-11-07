@@ -738,3 +738,10 @@ a.btn { text-decoration: none; }
 .folder .chat-item.nested { margin-left: 18px; border-left: 1px solid var(--border); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
 .folder .chat-item.nested .chat-link { padding-left: 14px; }
 .folder-empty { padding-left: 34px; }
+/* sidebar chat list: slim scrollbar that only shows while hovering, and never covers the ⋯ buttons */
+.chat-list { scrollbar-width: thin; scrollbar-color: transparent transparent; scrollbar-gutter: stable; padding-right: 2px; }
+.chat-list:hover { scrollbar-color: var(--border-strong) transparent; }
+.chat-list::-webkit-scrollbar { width: 5px; }
+.chat-list::-webkit-scrollbar-track { background: transparent; }
+.chat-list::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; }
+.chat-list:hover::-webkit-scrollbar-thumb { background: var(--border-strong); }
