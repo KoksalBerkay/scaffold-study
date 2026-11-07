@@ -139,10 +139,17 @@ async def log_progress(text: str):
     yield {"type": "done", "written": written}
 
 
-def toggle(line: int, checked: bool, name: str = "Quick Plan") -> str:
+def toggle(line: int, checked: bool, name: str = "Quick Plan", text: str | None = None) -> str:
+    """Tick a checklist line. `text` (the task as the UI saw it) guards against stale line numbers."""
     p = plan_file(name)
     lines = p.read_text().split("\n")
     i = line - 1
+    norm = lambda t: re.sub(r"^\s*[-*] \[[ xX]\]\s*", "", t).strip()  # noqa: E731
+    if text is not None and not (0 <= i < len(lines) and norm(lines[i]) == norm(text)):
+        matches = [j for j, l in enumerate(lines) if re.match(r"\s*[-*] \[[ xX]\]", l) and norm(l) == norm(text)]
+        if not matches:
+            raise ValueError("This task changed since the page loaded. Reload the plan and try again.")
+        i = matches[0]
     if not (0 <= i < len(lines)) or not re.match(r"\s*[-*] \[[ xX]\]", lines[i]):
         raise ValueError("That line is not a checklist item")
     lines[i] = re.sub(r"\[[ xX]\]", "[x]" if checked else "[ ]", lines[i], count=1)

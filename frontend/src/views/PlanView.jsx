@@ -284,11 +284,11 @@ export default function PlanView({ onStudy }) {
     runJob('/api/planner/log', { text }, ['Reading your log', 'Recalibrating estimates and rescheduling', 'Updating files'], 'Plan updated with your progress.')
   }
 
-  const toggle = async (line, checked) => {
+  const toggle = async (line, checked, text) => {
     try {
-      const r = await api('/api/planner/toggle', { method: 'POST', body: { line, checked, file: tab } })
+      const r = await api('/api/planner/toggle', { method: 'POST', body: { line, checked, file: tab, text } })
       setState((st) => ({ ...st, files: { ...st.files, [tab]: r.content } }))
-    } catch (e) { toast({ kind: 'error', text: e.message }) }
+    } catch (e) { toast({ kind: 'error', text: e.message }); load() }
   }
 
   if (!state) return <div className="center muted">Loading…</div>

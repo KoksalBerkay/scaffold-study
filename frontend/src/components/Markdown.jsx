@@ -125,7 +125,7 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
             className={`check ${checked ? 'on' : ''}`}
             aria-label={checked ? 'Mark as not done' : 'Mark as done'}
             disabled={!onToggle}
-            onClick={() => onToggle?.(line + lineOffset, !checked)}
+            onClick={() => onToggle?.(line + lineOffset, !checked, raw)}
           >
             {checked && <svg viewBox="0 0 16 16" width="12" height="12"><path d="M3 8.5l3.2 3L13 4.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>}
           </button>

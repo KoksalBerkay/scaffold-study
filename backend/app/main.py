@@ -218,7 +218,7 @@ async def planner_events(after: int = 0):
 @app.post("/api/planner/toggle")
 def planner_toggle(body: dict = Body(...)):
     try:
-        content = planner.toggle(int(body["line"]), bool(body["checked"]), body.get("file", "Quick Plan"))
+        content = planner.toggle(int(body["line"]), bool(body["checked"]), body.get("file", "Quick Plan"), body.get("text"))
     except ValueError as e:
         raise HTTPException(400, str(e))
     return {"content": content}
