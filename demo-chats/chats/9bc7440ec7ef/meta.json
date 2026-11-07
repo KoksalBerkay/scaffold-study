@@ -4,11 +4,11 @@
   "created": 1794056164.276779,
   "task": null,
   "pinned_files": [
-    "file:///Users/kbd/Documents/Repos/reply-hackathon/demo-materials/Linear%20Algebra/Exams/LA_exam_2026-06-18.pdf"
+    "file://{{DEMO_MATERIALS}}/Linear%20Algebra/Exams/LA_exam_2026-06-18.pdf"
   ],
   "notes_touched": [],
   "harness": false,
   "badge": null,
   "folder": "c1274825d2",
-  "updated": 1794056223.080247
+  "updated": 1794056238.603467
 }
