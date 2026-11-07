@@ -188,6 +188,25 @@ async def _run(args: list[str], stdin: str, cwd: str | None = None) -> tuple[int
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
 
+def friendly_error(provider: str, raw: str, model: str = "") -> str:
+    """Turn CLI/API error dumps into one sentence a student can act on."""
+    import re as _re
+    low = raw.lower()
+    m = _re.search(r'"message"\s*:\s*"([^"]+)"', raw)
+    detail = m.group(1) if m else ""
+    where = {"codex": "your ChatGPT plan", "claude_code": "your Claude plan", "openai": "your OpenAI key",
+             "anthropic": "your Anthropic key"}.get(provider, provider)
+    if "model_not_found" in low or ("model" in low and "not supported" in low) or "does not exist" in low:
+        return f"The model “{model or '?'}” isn't available with {where}. Pick another one in Settings → Models."
+    if "usage limit" in low or "rate limit" in low or "429" in low or "quota" in low:
+        return f"You've hit the usage limit of {where}. Wait a bit, or switch to another provider in Settings → Models."
+    if "not logged in" in low or "login" in low and "codex" in low or "unauthorized" in low or "401" in low:
+        return f"Scaffold isn't signed in to {where}. Sign in again (for ChatGPT: run `codex login`)."
+    if "network" in low or "connection" in low or "timed out" in low or "dns" in low:
+        return "Couldn't reach the AI service. Check your internet connection and try again."
+    return detail or raw[-300:]
+
+
 async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
     if not shutil.which("codex"):
         raise LLMError("Codex CLI not found. Install it and run `codex login`.")
@@ -205,11 +224,12 @@ async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
         args += ["-o", str(out_file)]  # a flag after -i ends the image list; prompt comes on stdin
         code, out, err = await _run(args, _flatten(system, messages), cwd=tmp)
         text = out_file.read_text() if out_file.exists() else ""
+        if code == 0 and not text.strip():
+            return ""
         if code != 0 or not text.strip():
             (WORKSPACE / "logs").mkdir(parents=True, exist_ok=True)
             (WORKSPACE / "logs" / "codex-last-failure.log").write_text(f"exit {code}\n--- stdout\n{out[-20000:]}\n--- stderr\n{err[-20000:]}")
-            tail = (err or out).strip().splitlines()[-6:]
-            raise LLMError("Codex failed: " + " | ".join(tail))
+            raise LLMError(friendly_error("codex", err + "\n" + out, cfg.get("model", "")))
         return text
 
 
@@ -242,9 +262,9 @@ async def _claude_code(cfg: dict, system: str, messages: list[dict]) -> str:
             if ev.get("is_error"):
                 raise LLMError("Claude Code: " + str(ev.get("result") or ev))
             result = ev.get("result")
-    if not result:
+    if result is None and code != 0:
         raise LLMError("Claude Code failed: " + (err or out)[-400:])
-    return result
+    return result or ""
 
 
 async def _openai(cfg: dict, system: str, messages: list[dict]) -> str:
@@ -304,12 +324,38 @@ async def _anthropic(cfg: dict, system: str, messages: list[dict]) -> str:
 _IMPL = {"codex": _codex, "claude_code": _claude_code, "openai": _openai, "anthropic": _anthropic}
 
 
+class EmptyReply(LLMError):
+    pass
+
+
 async def complete(role: str, system: str, messages: list[dict]) -> str:
+    """One model call. Empty or failed replies are retried automatically (up to 2 more tries)."""
     cfg = load_settings()["roles"].get(role) or load_settings()["roles"]["tutor"]
     impl = _IMPL.get(cfg.get("provider"))
     if not impl:
         raise LLMError(f"Unknown provider: {cfg.get('provider')}")
-    return (await impl(cfg, system, messages)).strip()
+    last: Exception | None = None
+    for attempt in range(3):
+        msgs = messages
+        if attempt and messages:
+            # nudge: some CLI runs end without a final message
+            tail = dict(messages[-1])
+            tail["content"] = tail.get("content", "") + "\n\n(Reply now, in plain text, without using any tools.)"
+            msgs = messages[:-1] + [tail]
+        try:
+            out = (await impl(cfg, system, msgs)).strip()
+            if out:
+                return out
+            last = EmptyReply("The model returned an empty reply.")
+        except LLMError as e:
+            last = e
+            msg = str(e).lower()
+            # do not retry problems that will not fix themselves
+            if any(k in msg for k in ("isn't available", "usage limit", "isn't signed in", "not found", "no openai api key", "no anthropic api key", "unknown provider",
+                                      "invalid", "does not exist", "unsupported", "401", "403", "404")):
+                raise
+        await asyncio.sleep(1.5 * (attempt + 1))
+    raise last or LLMError("The model did not answer.")
 
 
 async def provider_status() -> dict:

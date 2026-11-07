@@ -31,7 +31,7 @@ CHATS = [
         "screenshot": ("Linear Algebra/Exams/LA_exam_2026-06-18.pdf", 2),
         "turns": [
             "Exercise 4 in this screenshot. I don't even know where to start with the k.",
-            "Ok so I write the coefficient matrix and take its determinant? I got det = k³ − 3k + 2.",
+            "I expanded the determinant along the first row: (k − 1) − (1 − k) + k(k² − 1) = k³ + k − 2. Is that right?",
             "Why does det = 0 mean the solution is not unique? We never really saw that in class.",
         ],
     },
@@ -64,7 +64,7 @@ CHATS = [
         "folder": "Physics II", "title": "Moving loop and Lenz's law",
         "pinned": "Physics II/Exams/Physics2_exam_2026-06-25.pdf",
         "turns": [
-            "Problem 2 with the loop leaving the magnetic field. I need help with the emf and the direction.",
+            "Problem 2 with the loop leaving the magnetic field. I need help with the emf and the direction of the current.",
             "You skipped why the flux changes at all if the field is uniform.",
             "So the flux is Φ = B·L·x where x is the part still inside, and dΦ/dt = −B·L·v?",
         ],
