@@ -16,9 +16,9 @@
 
 | | |
 | --- | --- |
-| 🗓️ **Study planner** | Point it at your materials folder, add exam dates and hours. The Planner reads every past exam, question by question, and writes **Quick Plan**, **Study Plan**, **Time Estimates** and **Context** as markdown files you keep. |
+| 🗓️ **Study planner** | Just talk to it. Pick your materials folder; the Planner reads every past exam and *asks you* about exam dates, hours per day and weekends. Then it writes **Quick Plan**, **Study Plan**, **Time Estimates** and **Context** as markdown files you keep. |
 | ⏱️ **Real time estimates** | Minutes come from the material itself (points, exam length, question type, how new the topic is), not "90 min per block". Logging progress recalibrates them. |
-| ✅ **Trackable** | This week is a checklist. Tick tasks, hit **Study this** to open a tutor chat on that exact exercise, and **Log progress** to reschedule. |
+| ✅ **Daily check-in** | Each day mark tasks as *done*, *took a different time* or *skipped* (or "I didn't study today") and press **Update my plan**. Or just tell the Planner in its chat. It reschedules and recalibrates every file. **Study this** opens a tutor chat on that exact exercise. |
 | 🧑‍🏫 **Tutor** | Teaches from zero, anchored to a real exercise. Guides you step by step. Doesn't solve it for you. |
 | 🔍 **Reviewer** | A second agent checks every tutor reply for correctness, completeness and answer-giving *before* you see it. |
 | 🧠 **Personal memory** | Criticise the teaching ("you skipped why this works") and it becomes a lasting rule for **you**. |
