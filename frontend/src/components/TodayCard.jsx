@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Check, Clock, X, CalendarClock, MessageSquare, Send, Coffee, AlertCircle } from 'lucide-react'
+import { Check, Clock, X, CalendarClock, Send, Coffee, AlertCircle } from 'lucide-react'
 
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 }
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -59,7 +59,7 @@ function TaskRow({ t, state, setState }) {
   )
 }
 
-export default function TodayCard({ quickPlan, onSend, onTalk }) {
+export default function TodayCard({ quickPlan, onSend }) {
   const days = useMemo(() => parseDays(quickPlan), [quickPlan])
   const todayIso = iso(new Date())
   const today = days.find((d) => d.date === todayIso)
@@ -106,7 +106,6 @@ export default function TodayCard({ quickPlan, onSend, onTalk }) {
           {today?.tasks.length > 0 && (
             <button className="btn ghost small" onClick={() => onSend(`I didn't study today (${today.label}). Please move today's tasks forward.`, [])}><Coffee size={14} /> I didn't study today</button>
           )}
-          <button className="btn small" onClick={onTalk}><MessageSquare size={14} /> Talk to your planner</button>
         </div>
       </div>
 

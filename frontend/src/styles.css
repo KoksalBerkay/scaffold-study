@@ -724,3 +724,4 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .missed { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--text-2); }
 .missed svg { color: var(--warn); flex: none; }
 .missed span { flex: 1; min-width: 220px; }
+a.btn { text-decoration: none; }
