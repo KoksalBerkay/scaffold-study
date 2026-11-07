@@ -96,7 +96,8 @@ def _first_days(n: int = 2) -> str:
         out.append(f"**{lines[0].lstrip('# ').strip()}**")
         for l in lines[1:4]:
             if l.strip().startswith("- ["):
-                out.append(re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", l.strip()))
+                item = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", l.strip())
+                out.append(re.sub(r"^- \[[ xX]\]\s*", "- ", item))
     return "\n".join(out)
 
 
@@ -146,7 +147,11 @@ async def planchat_turn(cid: str, body: dict, retry: bool = False, **_):
         else:
             yield ev
     setup_m, update_m = SETUP_RE.search(out or ""), UPDATE_RE.search(out or "")
-    visible = UPDATE_RE.sub("", SETUP_RE.sub("", out or "")).strip() or "On it."
+    visible = UPDATE_RE.sub("", SETUP_RE.sub("", out or "")).strip()
+    if not visible:
+        visible = ("Great, I'm building your plan now. It takes a few minutes: I read every exam question by question. "
+                   "You can watch the progress below." if setup_m else
+                   "Got it. I'm updating your plan now." if update_m else "Okay.")
     asst = {"role": "assistant", "content": visible, "ts": time.time(), "activity": list(activity)}
     chat.append_message(cid, asst)
     yield {"type": "message", "message": asst}
