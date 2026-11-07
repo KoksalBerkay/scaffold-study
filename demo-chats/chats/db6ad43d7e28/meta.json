@@ -4,7 +4,7 @@
   "created": 1794055011.521512,
   "task": null,
   "pinned_files": [
-    "file:///Users/kbd/Documents/Repos/reply-hackathon/demo-materials/Databases/Exams/DB_exam_2026-07-02.pdf"
+    "file://{{DEMO_MATERIALS}}/Databases/Exams/DB_exam_2026-07-02.pdf"
   ],
   "notes_touched": [],
   "harness": false,

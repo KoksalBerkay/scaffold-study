@@ -150,12 +150,20 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const fileRef = useRef(null)
   const sentFirst = useRef(false)
 
+  const [missing, setMissing] = useState(false)
   const load = useCallback(async () => {
-    const c = await api(`/api/chats/${chatId}`)
-    setChat(c.meta)
-    setMessages(c.messages)
-    return c
-  }, [chatId])
+    try {
+      const c = await api(`/api/chats/${chatId}`)
+      setChat(c.meta)
+      setMessages(c.messages)
+      setMissing(false)
+      return c
+    } catch (e) {
+      setMissing(true)
+      onChanged?.()
+      return { messages: [] }
+    }
+  }, [chatId]) // eslint-disable-line
 
   useEffect(() => { api('/api/settings').then(setSettings) }, [])
   useEffect(() => {
@@ -231,6 +239,18 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       const r = await api('/api/materials/page', { method: 'POST', body: { file, page } })
       setAtts((a) => [...a, r])
     } catch (e) { toast({ kind: 'error', text: e.message }) }
+  }
+
+  if (missing) {
+    return (
+      <div className="center-col">
+        <div className="card job-card">
+          <h2>This chat doesn't exist anymore</h2>
+          <p className="muted">It was deleted or moved. Pick another chat on the left, or start a new one.</p>
+          <button className="btn primary" onClick={() => { window.location.hash = '/plan' }}>Back to my plan</button>
+        </div>
+      </div>
+    )
   }
 
   const empty = messages.length === 0 && !busy

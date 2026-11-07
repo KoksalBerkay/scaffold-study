@@ -4,7 +4,7 @@
   "created": 1794055011.520706,
   "task": "Databases \u00b7 2 July exam \u00b7 Q3 \u00b7 ~90 min: relational algebra and \u201cevery course\u201d",
   "pinned_files": [
-    "file:///Users/kbd/Documents/Repos/reply-hackathon/demo-materials/Databases/Exams/DB_exam_2026-07-02.pdf"
+    "file://{{DEMO_MATERIALS}}/Databases/Exams/DB_exam_2026-07-02.pdf"
   ],
   "notes_touched": [],
   "harness": false,

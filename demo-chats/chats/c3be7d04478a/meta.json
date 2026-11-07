@@ -4,7 +4,7 @@
   "created": 1794055011.519568,
   "task": null,
   "pinned_files": [
-    "file:///Users/kbd/Documents/Repos/reply-hackathon/demo-materials/Linear%20Algebra/Exams/LA_exam_2026-06-18.pdf"
+    "file://{{DEMO_MATERIALS}}/Linear%20Algebra/Exams/LA_exam_2026-06-18.pdf"
   ],
   "notes_touched": [],
   "harness": false,

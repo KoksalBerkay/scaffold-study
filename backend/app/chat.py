@@ -69,8 +69,10 @@ def load_meta(cid: str) -> dict:
     return json.loads(p.read_text())
 
 
-def save_meta(meta: dict):
+def save_meta(meta: dict, create: bool = False):
     d = chat_dir(meta["id"])
+    if not create and not d.exists():
+        raise ChatGone()
     d.mkdir(parents=True, exist_ok=True)
     meta["updated"] = time.time()
     (d / "meta.json").write_text(json.dumps(meta, indent=2))
@@ -83,8 +85,15 @@ def load_messages(cid: str) -> list[dict]:
     return [json.loads(l) for l in p.read_text().splitlines() if l.strip()]
 
 
+class ChatGone(Exception):
+    pass
+
+
 def append_message(cid: str, msg: dict):
-    with open(chat_dir(cid) / "transcript.jsonl", "a") as f:
+    d = chat_dir(cid)
+    if not d.exists():
+        raise ChatGone()  # the chat was deleted while the tutor was answering
+    with open(d / "transcript.jsonl", "a") as f:
         f.write(json.dumps(msg) + "\n")
 
 
@@ -195,7 +204,7 @@ def create_chat(body: dict = Body(default={})):
             "pinned_files": body.get("pinned_files") or [], "notes_touched": [], "harness": bool(body.get("harness")),
             "badge": body.get("badge"),
             "folder": body.get("folder") if body.get("folder") in {f["id"] for f in load_folders()} else None}
-    save_meta(meta)
+    save_meta(meta, create=True)
     return meta
 
 
@@ -644,6 +653,8 @@ async def summary_job(cid: str):
 @router.post("/api/chats/{cid}/messages")
 async def send_message(cid: str, body: dict = Body(...)):
     load_meta(cid)
+    if not (body.get("text") or "").strip() and not body.get("attachments"):
+        raise HTTPException(400, "Write a message or attach something first.")
 
     async def stream():
         try:
@@ -651,6 +662,8 @@ async def send_message(cid: str, body: dict = Body(...)):
                 yield f"data: {json.dumps(ev)}\n\n"
         except llm.LLMError as e:
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+        except ChatGone:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'This chat was deleted.'})}\n\n"
         except Exception as e:  # noqa
             import traceback
             traceback.print_exc()

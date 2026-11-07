@@ -19,6 +19,13 @@ from .files import note_target, notes_tree
 app = FastAPI(title="Scaffold")
 
 
+@app.exception_handler(ValueError)
+async def value_error(_request: Request, exc: ValueError):
+    """Bad input (e.g. a path outside the notes folder) is a 400, not a crash."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+
 def sse(gen):
     async def stream():
         try:

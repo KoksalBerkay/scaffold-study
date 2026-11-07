@@ -38,7 +38,9 @@ def note_target(rel: str) -> Path:
     root = notes_dir()
     p = (root / rel).resolve()
     if root not in p.parents:
-        raise ValueError(f"Refusing to write outside the notes folder: {rel}")
+        raise ValueError(f"Refusing to use a path outside the notes folder: {rel}")
+    if any(part.startswith(".") for part in p.relative_to(root).parts):
+        raise ValueError(f"Refusing to use a hidden folder: {rel}")
     return p
 
 

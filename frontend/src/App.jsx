@@ -44,7 +44,12 @@ function Shell() {
     try { setChats(await api('/api/chats')) } catch (e) { setChats([]) }
   }, [])
   useEffect(() => { loadChats() }, [loadChats, route.view])
-  useEffect(() => { const h = () => loadChats(); window.addEventListener('scaffold:chats', h); return () => window.removeEventListener('scaffold:chats', h) }, [loadChats])
+  useEffect(() => {
+    const h = () => loadChats()
+    window.addEventListener('scaffold:chats', h)
+    window.addEventListener('focus', h)
+    return () => { window.removeEventListener('scaffold:chats', h); window.removeEventListener('focus', h) }
+  }, [loadChats])
   useEffect(() => { api('/api/settings').then(setModels).catch(() => {}) }, [route.view])
 
   // Background events (notes written, memory updated)
