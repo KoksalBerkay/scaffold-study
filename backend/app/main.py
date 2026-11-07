@@ -215,6 +215,13 @@ async def planner_events(after: int = 0):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.get("/api/planchat")
+def planchat_info():
+    from . import planchat
+    meta = planchat.ensure_plan_chat()
+    return {"id": meta["id"]}
+
+
 @app.post("/api/planner/toggle")
 def planner_toggle(body: dict = Body(...)):
     try:

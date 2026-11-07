@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
-  FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library,
+  FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen,
 } from 'lucide-react'
 import { api, follow, setBusy as markBusy, upload } from '../api'
 import Markdown from '../components/Markdown'
-import { Modal, Pitch, useToast } from '../components/ui'
+import { FolderPicker, Modal, Pitch, useToast } from '../components/ui'
 import ModelPicker from '../components/ModelPicker'
 
 const STAGES = [
@@ -52,7 +52,7 @@ function ReviewBadge({ review }) {
   )
 }
 
-const ACT_ICON = { context: '📚', draft: '✍️', tool: '🔎', review: '🛡️', issues: '↩︎', revise: '🔧', approved: '✓' }
+const ACT_ICON = { context: '📚', draft: '✍️', tool: '🔎', review: '🛡️', issues: '↩︎', revise: '🔧', approved: '✓', build: '🗓️', update: '🗓️', done: '✓' }
 
 function ActivityList({ items, live }) {
   return (
@@ -75,11 +75,17 @@ function ActivityList({ items, live }) {
   )
 }
 
-function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting }) {
-  const order = ['context', 'drafting', 'tool', 'reviewing', 'revising']
+const PLANNER_STAGES = [
+  { id: 'context', label: 'Looking at your materials and plan' },
+  { id: 'drafting', label: 'Planner is thinking' },
+]
+
+function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting, kind }) {
+  const order = ['context', 'drafting', 'tool', 'reviewing', 'revising', 'building']
   const idx = order.indexOf(stage)
-  const steps = [...STAGES]
-  if (stage === 'revising' || rounds > 0) steps.push({ id: 'revising', label: 'Tutor is fixing what the reviewer found' })
+  const steps = kind === 'planner' ? [...PLANNER_STAGES] : [...STAGES]
+  if (kind === 'planner' && stage === 'building') steps.push({ id: 'building', label: 'Writing your plan files (this takes a few minutes)' })
+  if (kind !== 'planner' && (stage === 'revising' || rounds > 0)) steps.push({ id: 'revising', label: 'Tutor is fixing what the reviewer found' })
   const activeId = stage === 'tool' ? 'drafting' : stage
   return (
     <div className="msg assistant pending">
@@ -102,6 +108,47 @@ function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting }
         {reconnecting && <div className="reconnect small"><Loader2 size={12} className="spin" /> Connection dropped. Reconnecting; the tutor keeps working on the server…</div>}
         {activity.length > 0 && <ActivityList items={activity.slice(-10)} live />}
       </div>
+    </div>
+  )
+}
+
+function MaterialsBar({ settings, needFolder, busy, onChosen }) {
+  const toast = useToast()
+  const [pick, setPick] = useState(false)
+  const choose = async (path, label) => {
+    setPick(false)
+    try {
+      const r = await api('/api/materials/scan', { method: 'POST', body: { path } })
+      const s2 = await api('/api/settings')
+      const n = r.courses.length
+      onChosen(s2, label || `I chose my materials folder: ${r.path.split('/').pop()} (${n} course folder${n === 1 ? '' : 's'}).`)
+    } catch (e) { toast({ kind: 'error', text: e.message }) }
+  }
+  const useDemo = async () => {
+    const b = await api('/api/fs/browse')
+    const demo = b.shortcuts?.find((x) => x.name === 'Demo materials')
+    if (demo) choose(demo.path, 'I want to try it with the demo semester materials.')
+  }
+  if (!needFolder) {
+    return (
+      <div className="materials-bar">
+        <FolderOpen size={14} /> <span className="mono small" title={settings.materials_path}>{settings.materials_path.split('/').slice(-2).join('/')}</span>
+        <button className="link small" onClick={() => setPick(true)} disabled={busy}>Change folder</button>
+        {pick && <FolderPicker initial={settings.materials_path} title="Choose your materials folder" onClose={() => setPick(false)} onPick={(p) => choose(p)} />}
+      </div>
+    )
+  }
+  return (
+    <div className="folder-card">
+      <div>
+        <b>Where are your course materials?</b>
+        <div className="muted small">A folder with one subfolder per course: past exams, solutions, slides.</div>
+      </div>
+      <div className="row">
+        <button className="btn ghost small" onClick={useDemo} disabled={busy}>Try the demo semester</button>
+        <button className="btn primary" onClick={() => setPick(true)} disabled={busy}><FolderOpen size={15} /> Choose folder</button>
+      </div>
+      {pick && <FolderPicker title="Choose your materials folder" onClose={() => setPick(false)} onPick={(p) => choose(p)} />}
     </div>
   )
 }
@@ -324,7 +371,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     )
   }
 
-  const empty = messages.length === 0 && !busy
+  const empty = messages.length === 0 && !busy && chat?.kind !== 'planner'
+  const needFolder = chat?.kind === 'planner' && settings && !settings.materials_path
   const tutor = settings?.roles?.tutor
 
   return (
@@ -338,7 +386,15 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           {chat?.task && <span className="task-chip"><CalendarCheck size={13} /> From your plan</span>}
           {chat?.badge && <span className={`chat-badge ${/on$/.test(chat.badge) ? 'on' : ''}`}>Test run · {chat.badge}</span>}
         </div>
-        {settings && (
+        {settings && chat?.kind === 'planner' && (
+          <div className="chat-toggles">
+            {catalog && settings.roles?.planner && (
+              <ModelPicker compact catalog={catalog} value={settings.roles.planner} align="right"
+                onChange={async (cfg) => { const s2 = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, planner: cfg } } }); setSettings(s2) }} />
+            )}
+          </div>
+        )}
+        {settings && chat?.kind !== 'planner' && (
           <div className="chat-toggles">
             <button className={`toggle ${settings.review ? 'on' : ''}`} onClick={() => toggleSetting('review')} title="A second agent checks every reply before you see it">
               <ShieldCheck size={14} /> Review {settings.review ? 'on' : 'off'}
@@ -384,12 +440,17 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
                 </div>
               )}
               {m.content && <Markdown source={m.content} />}
-              {m.role === 'assistant' && <ReviewBadge review={m.review} />}
+              {m.role === 'assistant' && m.plan_link && (
+                <button className="btn primary small plan-link" onClick={() => { window.location.hash = '/plan'; window.dispatchEvent(new Event('scaffold:openplan')) }}>
+                  <CalendarCheck size={14} /> Open my study plan
+                </button>
+              )}
+              {m.role === 'assistant' && chat?.kind !== 'planner' && <ReviewBadge review={m.review} />}
               {m.role === 'assistant' && <HowMade m={m} />}
             </div>
           </div>
         ))}
-        {busy && <Pending {...busy} />}
+        {busy && <Pending {...busy} kind={chat?.kind} />}
         {!busy && failed && (
           <div className="msg assistant">
             <div className="avatar warn-av"><Sparkles size={15} /></div>
@@ -404,13 +465,17 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       </div>
 
       <div className="composer-wrap">
+        {chat?.kind === 'planner' && settings && (
+          <MaterialsBar settings={settings} needFolder={needFolder} busy={!!busy}
+            onChosen={async (s2, msg) => { setSettings(s2); send(msg, []) }} />
+        )}
         <div className="composer">
           {atts.length > 0 && <div className="atts">{atts.map((a) => <Attachment key={a.id} a={a} onRemove={() => setAtts((x) => x.filter((y) => y.id !== a.id))} />)}</div>}
           <textarea
             ref={taRef}
             rows={1}
             value={text}
-            placeholder={busy ? 'The tutor is working…' : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
+            placeholder={busy ? (chat?.kind === 'planner' ? 'The planner is working…' : 'The tutor is working…') : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}

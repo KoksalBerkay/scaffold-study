@@ -11,7 +11,7 @@ const ROLE_INFO = {
   background: { label: 'Background', hint: 'Notes, memory and chat summaries. A faster model is fine.' },
 }
 const PROMPT_INFO = {
-  planner: 'Study planner', plan_updater: 'Plan updater', tutor: 'Tutor', reviewer: 'Reviewer',
+  planner_chat: 'Planner conversation', planner: 'Study planner', plan_updater: 'Plan updater', tutor: 'Tutor', reviewer: 'Reviewer',
   notetaker: 'Note-taker', memory_updater: 'Memory updater', summary: 'Chat summary', math: 'Math formatting (shared)',
 }
 const SECTIONS = [

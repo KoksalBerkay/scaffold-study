@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap, Menu, X,
+  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap, Menu, X, MessageSquare,
 } from 'lucide-react'
 import { api, apiRetry, isBusy } from './api'
 import { ToastProvider, useToast } from './components/ui'
@@ -77,6 +77,7 @@ function Shell() {
         if (ev.type === 'memory') toast({ kind: 'success', title: 'Memory updated', text: ev.summary, timeout: 7000, action: { label: 'View', onClick: () => go('settings', 'memory') } })
         if (ev.type === 'notes') toast({ kind: 'success', title: 'Notes updated', text: ev.paths.join(', '), timeout: 7000, action: { label: 'Open', onClick: () => go('notes', ev.paths[0]) } })
         if (ev.type === 'chats') loadChats()
+        if (ev.type === 'plan') { window.dispatchEvent(new Event('scaffold:plan')); toast({ kind: 'success', title: 'Study plan updated', text: 'Your schedule and time estimates are up to date.', timeout: 6000, action: { label: 'Open', onClick: () => go('plan') } }) }
         if (ev.type === 'bg_error') toast({ kind: 'error', title: ev.title || 'Background task failed', text: ev.message, timeout: 8000 })
       }
     } catch (e) { /* no events */ }
@@ -114,6 +115,7 @@ function Shell() {
         <button className="btn primary block" onClick={() => newChat()}><MessageSquarePlus size={16} /> New chat</button>
         <nav className="nav">
           <button className={route.view === 'plan' ? 'on' : ''} onClick={() => go('plan')}><CalendarCheck size={17} /> Study plan</button>
+          <button className={`sub ${route.view === 'planchat' ? 'on' : ''}`} onClick={() => go('planchat')}><MessageSquare size={15} /> Planner chat</button>
           <button className={route.view === 'notes' ? 'on' : ''} onClick={() => go('notes')}><NotebookText size={17} /> Notes</button>
         </nav>
         <ChatSidebar
@@ -138,6 +140,7 @@ function Shell() {
         {route.view === 'plan' && <PlanView onStudy={studyTask} />}
         {route.view === 'notes' && <NotesView initial={route.arg} />}
         {route.view === 'settings' && <SettingsView section={route.arg} onSaved={setModels} />}
+        {route.view === 'planchat' && <ChatView key="studyplanner" chatId="studyplanner" onChanged={loadChats} />}
         {route.view === 'chat' && route.arg && (
           <ChatView key={route.arg} chatId={route.arg} firstMessage={pending} onConsumedFirst={() => setPending(null)} onChanged={loadChats} />
         )}

@@ -12,7 +12,7 @@ WORKSPACE = Path(os.environ.get("SCAFFOLD_WORKSPACE", ROOT / "workspace")).resol
 DEFAULT_PROMPTS = Path(__file__).parent / "prompts"
 
 PROMPT_NAMES = [
-    "planner", "plan_updater", "tutor", "reviewer", "notetaker",
+    "planner_chat", "planner", "plan_updater", "tutor", "reviewer", "notetaker",
     "memory_updater", "summary", "math",
 ]
 

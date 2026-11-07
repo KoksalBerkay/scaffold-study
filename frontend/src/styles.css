@@ -689,3 +689,38 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .howmade .activity { margin-top: 6px; }
 .bubble.failed { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px !important; border: 1px solid color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); border-radius: 12px; }
 .avatar.warn-av { background: var(--warn-soft); color: var(--warn); }
+
+/* ============ Planner chat ============ */
+.folder-card { max-width: 820px; margin: 0 auto 10px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 16px; border-radius: 14px; border: 1px dashed var(--accent); background: var(--accent-soft); }
+.materials-bar { max-width: 820px; margin: 0 auto 6px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12.5px; padding: 0 6px; }
+.materials-bar .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60%; }
+.plan-link { margin-top: 10px; text-decoration: none; }
+
+/* ============ Today check-in ============ */
+.nav button.sub { padding-left: 34px; font-size: 13px; }
+.today { margin: -4px 0 18px; padding: 18px 20px; display: flex; flex-direction: column; gap: 10px; border-color: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+.today-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.today-head h2 { font-size: 19px; }
+.today p { margin: 0; }
+.today-tasks { display: flex; flex-direction: column; gap: 6px; }
+.today-task { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--panel-2); }
+.today-task.done { border-color: color-mix(in srgb, var(--ok) 45%, var(--border)); }
+.today-task.skip { opacity: .7; }
+.today-task.time { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.today-task-main { flex: 1; min-width: 220px; display: flex; flex-direction: column; gap: 2px; }
+.today-task-head { font-weight: 600; }
+.today-actions { display: flex; gap: 4px; }
+.today-actions button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text-2); font-size: 12.5px; font-weight: 550; }
+.today-actions button:hover { border-color: var(--border-strong); color: var(--text); }
+.today-actions button.on.ok { background: var(--ok-soft); color: var(--ok); border-color: transparent; }
+.today-actions button.on.warn { background: var(--warn-soft); color: var(--warn); border-color: transparent; }
+.today-actions button.on.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; }
+.today-time { width: 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding-top: 4px; }
+.today-time input { width: 80px; padding: 4px 8px; }
+.chip.sel { border-style: solid; border-color: var(--warn); color: var(--warn); background: var(--warn-soft); }
+.today-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.today-foot input { min-width: 240px; }
+.pill-ok { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ok); background: var(--ok-soft); padding: 3px 9px; border-radius: 999px; }
+.missed { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--text-2); }
+.missed svg { color: var(--warn); flex: none; }
+.missed span { flex: 1; min-width: 220px; }

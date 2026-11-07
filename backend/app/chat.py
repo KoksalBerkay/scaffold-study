@@ -155,8 +155,8 @@ def list_chats():
             if not m.exists():
                 continue
             meta = read_json(m)
-            if not isinstance(meta, dict):
-                continue  # half-written or damaged: skip instead of crashing the list
+            if not isinstance(meta, dict) or meta.get("kind") == "planner":
+                continue  # half-written/damaged, or the study-plan chat (shown under Study plan)
             if meta.get("harness") and not meta.get("folder"):
                 # show test conversations in their own folder, with readable titles
                 meta["folder"] = ensure_folder(TEST_FOLDER)
@@ -770,10 +770,16 @@ def _remember_error(cid: str, message: str):
 
 
 def _start_turn(cid: str, body: dict, retry: bool = False):
-    from . import jobs
+    from . import jobs, planchat
     if jobs.running(f"chat:{cid}"):
-        raise HTTPException(409, "The tutor is still answering in this chat.")
-    jobs.start(f"chat:{cid}", lambda: tutor_turn(cid, body, retry=retry), on_error=lambda m: _remember_error(cid, m))
+        raise HTTPException(409, "Still working on the last message in this chat.")
+    if load_meta(cid).get("kind") == "planner":
+        if jobs.running("planner"):
+            raise HTTPException(409, "The planner is still updating your plan. One moment.")
+        turn = lambda: planchat.planchat_turn(cid, body, retry=retry)  # noqa: E731
+    else:
+        turn = lambda: tutor_turn(cid, body, retry=retry)  # noqa: E731
+    jobs.start(f"chat:{cid}", turn, on_error=lambda m: _remember_error(cid, m))
     return {"ok": True}
 
 

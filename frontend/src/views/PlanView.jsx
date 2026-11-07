@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   FolderOpen, CalendarDays, Clock, Sparkles, ArrowRight, ArrowLeft, RefreshCw, PencilLine,
-  NotebookPen, Play, BookOpen, FileText, Timer, ListChecks, Check,
+  NotebookPen, Play, BookOpen, FileText, Timer, ListChecks, Check, MessageSquare,
 } from 'lucide-react'
 import { api, apiRetry, follow, setBusy } from '../api'
 import Markdown, { splitFrontmatter } from '../components/Markdown'
+import TodayCard from '../components/TodayCard'
+import ChatView from './ChatView'
 import { FolderPicker, JobProgress, Modal, Pitch, Segmented, useToast } from '../components/ui'
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -239,9 +241,18 @@ export default function PlanView({ onStudy }) {
       return { files: {} }
     }
   }
-  useEffect(() => { load().then((r) => { if (r.running) watch(['Reading your materials', 'Thinking it through and scheduling', 'Writing your plan'], 'Your plan is ready.') }) }, []) // eslint-disable-line
+  const hasPlanRef = useRef(false)
+  useEffect(() => {
+    const refresh = () => { if (hasPlanRef.current) load() } // live refresh of an existing plan; never yank the user out of the planning chat
+    const open = () => load()
+    window.addEventListener('scaffold:plan', refresh)
+    window.addEventListener('scaffold:openplan', open)
+    return () => { window.removeEventListener('scaffold:plan', refresh); window.removeEventListener('scaffold:openplan', open) }
+  }, []) // eslint-disable-line
+  useEffect(() => { api('/api/planchat').catch(() => {}); load().then((r) => { if (r.running) watch(['Reading your materials', 'Thinking it through and scheduling', 'Writing your plan'], 'Your plan is ready.') }) }, []) // eslint-disable-line
 
   const hasPlan = state && Object.keys(state.files || {}).length > 0
+  hasPlanRef.current = !!hasPlan
   const current = state?.files?.[tab] || ''
   const { body, meta, offset } = useMemo(() => splitFrontmatter(current), [current])
   const progress = useMemo(() => weekProgress(state?.files?.['Quick Plan'] || ''), [state])
@@ -291,6 +302,17 @@ export default function PlanView({ onStudy }) {
     runJob('/api/planner/log', { text }, ['Reading your log', 'Recalibrating estimates and rescheduling', 'Updating files'], 'Plan updated with your progress.')
   }
 
+  const checkIn = async (message, doneLines) => {
+    for (const raw of doneLines) {
+      const n = (state.files['Quick Plan'] || '').split('\n').indexOf(raw) + 1
+      if (n > 0) { try { await api('/api/planner/toggle', { method: 'POST', body: { line: n, checked: true, file: 'Quick Plan', text: raw } }) } catch (e) { /* the planner will still record it */ } }
+    }
+    try {
+      await api('/api/chats/studyplanner/messages', { method: 'POST', body: { text: message } })
+      window.location.hash = '/planchat'
+    } catch (e) { toast({ kind: 'error', text: e.message }) }
+  }
+
   const toggle = async (line, checked, text) => {
     try {
       const r = await api('/api/planner/toggle', { method: 'POST', body: { line, checked, file: tab, text } })
@@ -321,7 +343,11 @@ export default function PlanView({ onStudy }) {
     )
   }
 
-  if (!hasPlan || mode === 'wizard') {
+  if (!hasPlan && mode !== 'wizard') {
+    return <ChatView key="studyplanner" chatId="studyplanner" onChanged={() => load()} />
+  }
+
+  if (mode === 'wizard') {
     const demo = async () => {
       const r = await api('/api/demo/seed', { method: 'POST', body: {} })
       await load()
@@ -343,11 +369,11 @@ export default function PlanView({ onStudy }) {
           <h1>{tab === 'Quick Plan' ? 'This week' : TABS.find((t) => t.id === tab)?.label}</h1>
         </div>
         <div className="head-actions">
-          <button className="btn ghost" onClick={() => setMode('wizard')}><PencilLine size={16} /> Edit setup</button>
-          <button className="btn ghost" onClick={() => generate(state.setup)} disabled={!state.setup}><RefreshCw size={16} /> Rebuild</button>
-          <button className="btn primary" onClick={() => setLogOpen(true)}><NotebookPen size={16} /> Log progress</button>
+          <a className="btn primary" href="#/planchat"><MessageSquare size={16} /> Talk to your planner</a>
         </div>
       </header>
+
+      <TodayCard quickPlan={state.files['Quick Plan']} onTalk={() => { window.location.hash = '/planchat' }} onSend={checkIn} />
 
       <div className="tabs">
         {TABS.map((t) => (
