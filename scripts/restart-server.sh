@@ -8,8 +8,7 @@ for i in $(seq 1 600); do
   [ "$i" = 1 ] && echo "waiting for running jobs to finish: $R"
   sleep 2
 done
-pkill -f "uvicorn app.main:app"
-# also free the port from anything else still holding it (e.g. an orphaned reload worker)
+# stop only what serves :8765 (never other Scaffold servers, e.g. test instances on other ports)
 for pid in $(lsof -tiTCP:8765 -sTCP:LISTEN 2>/dev/null); do kill "$pid" 2>/dev/null; done
 for i in $(seq 1 20); do lsof -tiTCP:8765 -sTCP:LISTEN >/dev/null 2>&1 || break; sleep 0.25; done
 nohup .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --timeout-graceful-shutdown 2 > "$LOG" 2>&1 &
