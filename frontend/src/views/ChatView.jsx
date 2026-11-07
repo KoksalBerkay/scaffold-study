@@ -18,6 +18,11 @@ const ISSUE_LABEL = {
   feedback: 'Feedback on attempt', memory: 'Your preferences', clarity: 'Clarity',
 }
 
+/** Short reviewer/activity text with LaTeX, code and bold rendered inline. */
+function InlineMd({ text }) {
+  return <Markdown source={String(text || '')} className="inline-md" />
+}
+
 function ReviewBadge({ review }) {
   const [open, setOpen] = useState(false)
   if (!review) return null
@@ -30,7 +35,7 @@ function ReviewBadge({ review }) {
         {ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
         <span>{ok ? 'Reviewed' : 'Reviewed with open issues'}</span>
         {fixes > 0 && <span className="sep">·</span>}
-        {fixes > 0 && <span>{review.student_note || `${fixes} fix${fixes > 1 ? 'es' : ''} before you saw it`}</span>}
+        {fixes > 0 && (review.student_note ? <InlineMd text={review.student_note} /> : <span>{`${fixes} fix${fixes > 1 ? 'es' : ''} before you saw it`}</span>)}
         {fixes === 0 && <span className="muted">· approved first time</span>}
         {fixes > 0 && <ChevronDown size={14} className={open ? 'rot' : ''} />}
       </button>
@@ -41,7 +46,7 @@ function ReviewBadge({ review }) {
               <div className="muted tiny">Round {i + 1}: the reviewer sent it back</div>
               <ul>
                 {r.issues.map((is, j) => (
-                  <li key={j}><span className={`issue-tag t-${is.type}`}>{ISSUE_LABEL[is.type] || is.type}</span> {is.fix}</li>
+                  <li key={j}><span className={`issue-tag t-${is.type}`}>{ISSUE_LABEL[is.type] || is.type}</span> <InlineMd text={is.fix} /></li>
                 ))}
               </ul>
             </div>
@@ -61,10 +66,10 @@ function ActivityList({ items, live }) {
         <li key={i} className={`act act-${a.kind}`}>
           <span className="act-icon" aria-hidden="true">{ACT_ICON[a.kind] || '•'}</span>
           <div className="act-body">
-            <span>{a.text}</span>
+            <InlineMd text={a.text} />
             {a.issues?.length > 0 && (
               <ul className="act-issues">
-                {a.issues.map((is, j) => <li key={j}><span className="issue-tag">{is.label}</span> {is.fix}</li>)}
+                {a.issues.map((is, j) => <li key={j}><span className="issue-tag">{is.label}</span> <InlineMd text={is.fix} /></li>)}
               </ul>
             )}
           </div>

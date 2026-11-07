@@ -725,3 +725,12 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .missed svg { color: var(--warn); flex: none; }
 .missed span { flex: 1; min-width: 220px; }
 a.btn { text-decoration: none; }
+
+/* inline markdown (reviewer issues, activity) */
+.md.inline-md { display: inline; line-height: inherit; font-size: inherit; color: inherit; }
+.md.inline-md > p { display: inline; margin: 0; }
+.md.inline-md .katex { font-size: 1em; }
+.md.inline-md .katex-display { display: inline-block; margin: 0 2px; padding: 0; }
+.md.inline-md .katex-display > .katex { display: inline; }
+.review-badge .md.inline-md { color: inherit; }
+.activity.live .act:last-child .act-body > .inline-md::after { content: '…'; animation: blink 1.2s infinite; }
