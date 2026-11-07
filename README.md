@@ -30,10 +30,11 @@
 ## 🚀 How to run
 
 ```bash
-./run.sh
+./run.sh          # web version: open http://127.0.0.1:8765 in any browser
+./run.sh --app    # desktop app: the same thing in its own native window
 ```
 
-Then open **http://127.0.0.1:8765**.
+On macOS you can also run `scripts/make-mac-app.sh` once to get a double-clickable **Scaffold.app**.
 
 The script creates the Python env, installs the frontend packages, builds the UI, generates a small `demo-materials/` folder, and starts the server.
 

@@ -300,7 +300,8 @@ export default function PlanView({ onStudy }) {
       const r = await api('/api/demo/seed', { method: 'POST', body: {} })
       await load()
       setMode('view')
-      toast({ kind: 'success', text: `Demo semester loaded (${r.written.length} files).` })
+      toast({ kind: 'success', text: `Demo semester loaded: ${r.written.length} notes and plan files, ${r.chats || 0} chats.` })
+      window.dispatchEvent(new Event('scaffold:chats'))
     }
     return <Wizard initial={state.setup} onGenerate={generate} onCancel={hasPlan ? () => setMode('view') : null} onDemo={demo} />
   }

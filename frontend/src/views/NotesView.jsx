@@ -106,8 +106,9 @@ export default function NotesView({ initial }) {
         <button className="btn small ghost" onClick={async () => {
           const r = await api('/api/demo/seed', { method: 'POST', body: {} })
           await loadTree()
-          toast({ kind: 'success', text: r.written.length ? `Loaded ${r.written.length} demo notes.` : 'Demo notes are already loaded.' })
-        }}><Sparkles size={14} /> Load demo notes</button>
+          toast({ kind: 'success', text: r.written.length || r.chats ? `Loaded ${r.written.length} demo notes and ${r.chats || 0} demo chats.` : 'Demo data is already loaded.' })
+          window.dispatchEvent(new Event('scaffold:chats'))
+        }}><Sparkles size={14} /> Load demo data</button>
         {tree && <p className="muted tiny pad mono" title={tree.root}>{tree.root}</p>}
       </div>
       <div className="notes-view">

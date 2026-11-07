@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import traceback
 from pathlib import Path
 
@@ -263,6 +264,7 @@ def seed_demo(body: dict = Body(default={})):
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(text)
         written.append(str(rel))
+    chats_added = _seed_demo_chats(mats)
     s = load_settings()
     if not s.get("materials_path"):
         s["materials_path"] = str(mats)
@@ -271,4 +273,36 @@ def seed_demo(body: dict = Body(default={})):
         setup = json.loads((src / "planner_setup.json").read_text())
         setup["materials_path"] = str(mats)
         planner.setup_path().write_text(json.dumps(setup, indent=2))
-    return {"written": written, "skipped": skipped}
+    return {"written": written, "skipped": skipped, "chats": chats_added}
+
+
+def _seed_demo_chats(mats: Path) -> int:
+    from . import chat as chatmod
+    src = ROOT / "demo-chats"
+    if not (src / "chats").is_dir():
+        return 0
+    up_dst = chatmod.UPLOADS
+    up_dst.mkdir(parents=True, exist_ok=True)
+    for f in (src / "uploads").glob("*") if (src / "uploads").is_dir() else []:
+        if not (up_dst / f.name).exists():
+            shutil.copy(f, up_dst / f.name)
+    demo_folders = json.loads((src / "chats" / "folders.json").read_text()) if (src / "chats" / "folders.json").exists() else []
+    remap = {f["id"]: chatmod.ensure_folder(f["name"]) for f in demo_folders}
+
+    def fill(text: str) -> str:
+        return (text.replace("file://{{DEMO_MATERIALS}}", mats.resolve().as_uri())
+                .replace("{{DEMO_MATERIALS_PATH}}", str(mats.resolve()))
+                .replace("{{UPLOADS}}", str(up_dst.resolve())))
+    added = 0
+    for d in sorted((src / "chats").iterdir()):
+        if not d.is_dir() or (chatmod.CHATS / d.name).exists():
+            continue
+        dst = chatmod.CHATS / d.name
+        dst.mkdir(parents=True)
+        for f in d.iterdir():
+            (dst / f.name).write_text(fill(f.read_text()))
+        meta = json.loads((dst / "meta.json").read_text())
+        meta["folder"] = remap.get(meta.get("folder"))
+        (dst / "meta.json").write_text(json.dumps(meta, indent=2))
+        added += 1
+    return added

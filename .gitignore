@@ -6,3 +6,4 @@ __pycache__/
 frontend/dist/
 .DS_Store
 test-runs/
+Scaffold.app/
