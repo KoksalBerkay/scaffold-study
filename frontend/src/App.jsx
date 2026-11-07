@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap,
 } from 'lucide-react'
-import { api, isBusy } from './api'
+import { api, apiRetry, isBusy } from './api'
 import { ToastProvider, useToast } from './components/ui'
 import ChatSidebar from './components/ChatSidebar'
 import PlanView from './views/PlanView'
@@ -41,7 +41,7 @@ function Shell() {
   const go = (view, arg = '') => { window.location.hash = `/${view}${arg ? '/' + encodeURIComponent(arg) : ''}` }
 
   const loadChats = useCallback(async () => {
-    try { setChats(await api('/api/chats')) } catch (e) { setChats([]) }
+    try { setChats(await apiRetry('/api/chats', { tries: 5 })) } catch (e) { /* keep the last list */ }
   }, [])
   useEffect(() => { loadChats() }, [loadChats, route.view])
   useEffect(() => {

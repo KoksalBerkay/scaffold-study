@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Cpu, KeyRound, ScrollText, Brain, FolderCog, CheckCircle2, XCircle, Loader2, RotateCcw, Save, FolderOpen } from 'lucide-react'
-import { api } from '../api'
+import { api, apiRetry } from '../api'
 import { FolderPicker, useToast } from '../components/ui'
 import ModelPicker, { modelLabel } from '../components/ModelPicker'
 
@@ -26,7 +26,7 @@ function Models({ settings, setSettings, save }) {
   const [catalog, setCatalog] = useState(null)
   const [testing, setTesting] = useState({})
   const [keys, setKeys] = useState({ openai: '', anthropic: '' })
-  const loadCatalog = () => api('/api/models').then((r) => setCatalog(r.catalog))
+  const loadCatalog = () => apiRetry('/api/models').then((r) => setCatalog(r.catalog)).catch(() => {})
   useEffect(() => { loadCatalog() }, [])
 
   const setRole = (role, cfg) => {
@@ -219,7 +219,7 @@ function Folders({ settings, save }) {
 export default function SettingsView({ section, onSaved }) {
   const [settings, setSettings] = useState(null)
   const sec = section || 'models'
-  useEffect(() => { api('/api/settings').then(setSettings) }, [])
+  useEffect(() => { apiRetry('/api/settings').then(setSettings).catch(() => {}) }, [])
   const save = async (patch) => {
     const s = await api('/api/settings', { method: 'PUT', body: { ...settings, ...patch } })
     setSettings(s); onSaved?.(s)

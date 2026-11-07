@@ -117,3 +117,17 @@ export function materialUrl(href) {
 let busy = 0
 export function setBusy(on) { busy = Math.max(0, busy + (on ? 1 : -1)) }
 export function isBusy() { return busy > 0 }
+
+/** GET with automatic retries: for a page's first load, so a slow start never leaves it stuck. */
+export async function apiRetry(path, { tries = 8, onRetry } = {}) {
+  let last
+  for (let i = 0; i < tries; i++) {
+    try { return await api(path) } catch (e) {
+      last = e
+      if (/^(4\d\d|Not Found|Bad Request|Forbidden)/.test(e.message)) throw e
+      onRetry?.(i + 1)
+      await sleep(Math.min(4000, 500 * (i + 1)))
+    }
+  }
+  throw last
+}

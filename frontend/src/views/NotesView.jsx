@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Folder, BookOpen, PencilLine, Search, Check, Loader2, FilePlus, Sparkles } from 'lucide-react'
-import { api, setBusy } from '../api'
+import { api, apiRetry, setBusy } from '../api'
 import Markdown, { Properties, splitFrontmatter } from '../components/Markdown'
 import LiveEditor from '../components/LiveEditor'
 import { useToast } from '../components/ui'
@@ -16,7 +16,7 @@ export default function NotesView({ initial }) {
   const timer = useRef(null)
   const latest = useRef({ sel, text: null })
 
-  const loadTree = () => api('/api/notes').then(setTree)
+  const loadTree = () => apiRetry('/api/notes').then(setTree).catch(() => {})
   useEffect(() => { loadTree() }, [])
   useEffect(() => { if (initial) setSel(initial) }, [initial])
 

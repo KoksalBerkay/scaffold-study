@@ -3,7 +3,7 @@ import {
   FolderOpen, CalendarDays, Clock, Sparkles, ArrowRight, ArrowLeft, RefreshCw, PencilLine,
   NotebookPen, Play, BookOpen, FileText, Timer, ListChecks, Check,
 } from 'lucide-react'
-import { api, follow, setBusy } from '../api'
+import { api, apiRetry, follow, setBusy } from '../api'
 import Markdown, { splitFrontmatter } from '../components/Markdown'
 import { FolderPicker, JobProgress, Modal, Pitch, Segmented, useToast } from '../components/ui'
 
@@ -227,10 +227,17 @@ export default function PlanView({ onStudy }) {
   const [logOpen, setLogOpen] = useState(false)
   const [logText, setLogText] = useState('')
 
+  const [loadErr, setLoadErr] = useState(null)
   const load = async () => {
-    const r = await api('/api/planner')
-    setState(r)
-    return r
+    try {
+      const r = await apiRetry('/api/planner', { onRetry: (n) => setLoadErr(n) })
+      setLoadErr(null)
+      setState(r)
+      return r
+    } catch (e) {
+      setLoadErr('failed')
+      return { files: {} }
+    }
   }
   useEffect(() => { load().then((r) => { if (r.running) watch(['Reading your materials', 'Thinking it through and scheduling', 'Writing your plan'], 'Your plan is ready.') }) }, []) // eslint-disable-line
 
@@ -291,7 +298,15 @@ export default function PlanView({ onStudy }) {
     } catch (e) { toast({ kind: 'error', text: e.message }); load() }
   }
 
-  if (!state) return <div className="center muted">Loading…</div>
+  if (!state) {
+    return (
+      <div className="center muted">
+        {loadErr === 'failed'
+          ? <div className="stack" style={{ alignItems: 'center' }}><span>Couldn't reach Scaffold.</span><button className="btn" onClick={load}>Try again</button></div>
+          : loadErr ? 'Still connecting to Scaffold…' : 'Loading…'}
+      </div>
+    )
+  }
 
   if (mode === 'generating') {
     return (
