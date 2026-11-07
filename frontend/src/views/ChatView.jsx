@@ -428,6 +428,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             </div>
           </div>
         )}
+        {chat?.kind === 'planner' && messages.length <= 1 && <Pitch />}
         {messages.map((m, i) => (
           <div key={i} className={`msg ${m.role}`}>
             {m.role === 'assistant' && <div className="avatar tutor"><Sparkles size={15} /></div>}
@@ -482,9 +483,13 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           />
           <div className="composer-bar">
             <div className="row">
-              <button className="icon-btn ghost" title="Attach images or PDFs" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
-              <button className="icon-btn ghost" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={17} /></button>
-              <span className="muted tiny hint"><ImageIcon size={12} /> Paste or drop screenshots · Shift+Enter for a new line</span>
+              {chat?.kind !== 'planner' ? (
+                <>
+                  <button className="icon-btn ghost" title="Attach images or PDFs" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
+                  <button className="icon-btn ghost" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={17} /></button>
+                  <span className="muted tiny hint"><ImageIcon size={12} /> Paste or drop screenshots · Shift+Enter for a new line</span>
+                </>
+              ) : <span className="muted tiny hint">Just write normally, e.g. “about 3 hours on weekdays, no Sundays” · Shift+Enter for a new line</span>}
             </div>
             <button className="send" onClick={() => send()} disabled={!!busy || (!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)} aria-label="Send">
               {busy ? <Loader2 size={17} className="spin" /> : <ArrowUp size={17} />}
