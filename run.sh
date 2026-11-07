@@ -22,7 +22,9 @@ if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then (cd frontend && npx vite bui
 cd backend
 if [ "$APP" = 1 ]; then
   echo "Opening the Scaffold app…"
-  exec .venv/bin/python desktop.py
+  # a link named "Scaffold" makes the OS show the app name instead of "python3.12"
+  [ -e .venv/bin/Scaffold ] || ln -s python .venv/bin/Scaffold
+  exec .venv/bin/Scaffold desktop.py
 fi
 echo "Scaffold running at http://127.0.0.1:8765"
 exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --timeout-graceful-shutdown 2

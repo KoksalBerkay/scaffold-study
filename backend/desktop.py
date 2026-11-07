@@ -18,6 +18,25 @@ sys.path.insert(0, str(Path(__file__).parent))
 from app.config import WORKSPACE  # noqa: E402
 
 PORT = 8765
+ICON = Path(__file__).resolve().parents[1] / "assets" / "icon-1024.png"
+
+
+def brand_macos_app():
+    """Show 'Scaffold' with its icon in the Dock, menu bar and app switcher instead of 'python3.12'."""
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSImage
+        from Foundation import NSBundle, NSProcessInfo
+        info = NSBundle.mainBundle().infoDictionary()
+        info["CFBundleName"] = "Scaffold"
+        info["CFBundleDisplayName"] = "Scaffold"
+        NSProcessInfo.processInfo().setProcessName_("Scaffold")
+        app = NSApplication.sharedApplication()
+        if ICON.exists():
+            app.setApplicationIconImage_(NSImage.alloc().initWithContentsOfFile_(str(ICON)))
+    except Exception as e:  # cosmetic only, never block startup
+        print("branding skipped:", e)
 
 
 def scaffold_running(port: int) -> bool:
@@ -51,6 +70,7 @@ def start_server() -> tuple[int, uvicorn.Server | None]:
 
 
 def main():
+    brand_macos_app()
     port, server = start_server()
     webview.create_window("Scaffold", f"http://127.0.0.1:{port}/", width=1440, height=920, min_size=(900, 600),
                           background_color="#0E1015", text_select=True)
