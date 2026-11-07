@@ -52,7 +52,8 @@ Rules: gave_answer_early is true if the reply states the final answer, the full 
 
 
 async def run_conversation(sc: dict, review: bool) -> list[dict]:
-    meta = chat.create_chat({"title": f"[harness] {sc['id']} review={review}", "harness": True,
+    meta = chat.create_chat({"title": sc.get("title", sc["id"]), "badge": f"Reviewer {'on' if review else 'off'}",
+                             "harness": True, "folder": chat.ensure_folder(f"{chat.TEST_FOLDER} · {dt.datetime.now():%d %b %H:%M}"),
                              "pinned_files": [str((Path(load_settings()["materials_path"]) / sc["file"]).as_uri())]})
     turns = []
     for step in sc["steps"]:

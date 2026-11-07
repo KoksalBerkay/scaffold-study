@@ -234,6 +234,8 @@ if DIST.is_dir():
 
     @app.get("/{full_path:path}")
     def spa(full_path: str):
+        if full_path.startswith("api/"):
+            raise HTTPException(404, "Unknown API route")
         f = DIST / full_path
         if full_path and f.is_file():
             return FileResponse(f)

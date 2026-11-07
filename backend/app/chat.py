@@ -93,25 +93,108 @@ def read_summary(cid: str) -> str:
     return p.read_text() if p.exists() else ""
 
 
+FOLDERS_FILE = CHATS / "folders.json"
+TEST_FOLDER = "Reviewer tests"
+
+
+def load_folders() -> list[dict]:
+    if FOLDERS_FILE.exists():
+        try:
+            return json.loads(FOLDERS_FILE.read_text())
+        except Exception:
+            return []
+    return []
+
+
+def save_folders(folders: list[dict]):
+    CHATS.mkdir(parents=True, exist_ok=True)
+    FOLDERS_FILE.write_text(json.dumps(folders, indent=2))
+
+
+def ensure_folder(name: str) -> str:
+    folders = load_folders()
+    for f in folders:
+        if f["name"] == name:
+            return f["id"]
+    f = {"id": uuid.uuid4().hex[:10], "name": name, "created": time.time()}
+    save_folders(folders + [f])
+    return f["id"]
+
+
+def _harness_title(meta: dict) -> str:
+    m = re.match(r"\[harness\] (\S+) review=(True|False)", meta.get("title") or "")
+    if not m:
+        return meta.get("title") or "Test"
+    nice = {"eigenvalues": "Eigenvalues", "sql-grouping": "SQL grouping", "gauss-sphere": "Gauss's law"}.get(m[1], m[1])
+    return f"{nice} · Reviewer {'on' if m[2] == 'True' else 'off'}"
+
+
 @router.get("/api/chats")
 def list_chats():
     out = []
     if CHATS.exists():
         for d in CHATS.iterdir():
             m = d / "meta.json"
+            if not m.exists():
+                continue
+            meta = json.loads(m.read_text())
+            if meta.get("harness") and not meta.get("folder"):
+                # show test conversations in their own folder, with readable titles
+                meta["folder"] = ensure_folder(TEST_FOLDER)
+                meta["title"] = _harness_title(meta)
+                (d / "meta.json").write_text(json.dumps(meta, indent=2))
+            out.append({k: meta.get(k) for k in ("id", "title", "updated", "created", "task", "folder", "harness", "badge")})
+    return sorted(out, key=lambda x: -(x["updated"] or 0))
+
+
+@router.get("/api/chat-folders")
+def get_folders():
+    return load_folders()
+
+
+@router.post("/api/chat-folders")
+def create_folder(body: dict = Body(...)):
+    name = (body.get("name") or "").strip() or "New folder"
+    f = {"id": uuid.uuid4().hex[:10], "name": name[:60], "created": time.time()}
+    save_folders(load_folders() + [f])
+    return f
+
+
+@router.patch("/api/chat-folders/{fid}")
+def rename_folder(fid: str, body: dict = Body(...)):
+    folders = load_folders()
+    for f in folders:
+        if f["id"] == fid:
+            if "name" in body:
+                f["name"] = (body["name"] or "").strip()[:60] or f["name"]
+            if "collapsed" in body:
+                f["collapsed"] = bool(body["collapsed"])
+    save_folders(folders)
+    return folders
+
+
+@router.delete("/api/chat-folders/{fid}")
+def delete_folder(fid: str):
+    """Delete a folder; its chats move back to the top level (never deleted)."""
+    save_folders([f for f in load_folders() if f["id"] != fid])
+    if CHATS.exists():
+        for d in CHATS.iterdir():
+            m = d / "meta.json"
             if m.exists():
                 meta = json.loads(m.read_text())
-                if meta.get("harness"):
-                    continue
-                out.append({k: meta.get(k) for k in ("id", "title", "updated", "created", "task")})
-    return sorted(out, key=lambda x: -(x["updated"] or 0))
+                if meta.get("folder") == fid:
+                    meta["folder"] = None
+                    m.write_text(json.dumps(meta, indent=2))
+    return {"ok": True}
 
 
 @router.post("/api/chats")
 def create_chat(body: dict = Body(default={})):
     cid = uuid.uuid4().hex[:12]
     meta = {"id": cid, "title": body.get("title") or "", "created": time.time(), "task": body.get("task"),
-            "pinned_files": body.get("pinned_files") or [], "notes_touched": [], "harness": bool(body.get("harness"))}
+            "pinned_files": body.get("pinned_files") or [], "notes_touched": [], "harness": bool(body.get("harness")),
+            "badge": body.get("badge"),
+            "folder": body.get("folder") if body.get("folder") in {f["id"] for f in load_folders()} else None}
     save_meta(meta)
     return meta
 
@@ -124,8 +207,13 @@ def get_chat(cid: str):
 @router.patch("/api/chats/{cid}")
 def rename_chat(cid: str, body: dict = Body(...)):
     meta = load_meta(cid)
-    meta["title"] = body.get("title", meta["title"])
-    save_meta(meta)
+    if "title" in body:
+        meta["title"] = (body.get("title") or "").strip()[:120] or meta["title"]
+    if "folder" in body:
+        fid = body.get("folder")
+        meta["folder"] = fid if fid in {f["id"] for f in load_folders()} else None
+    p = chat_dir(cid) / "meta.json"
+    p.write_text(json.dumps(meta, indent=2))  # moving/renaming must not reorder by "updated"
     return meta
 
 
@@ -302,7 +390,7 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str]:
 
     others = []
     for c in list_chats()[:12]:
-        if c["id"] == meta["id"]:
+        if c["id"] == meta["id"] or c.get("harness"):
             continue
         s = read_summary(c["id"])
         others.append(f"- {c['id']}: {c['title'] or 'untitled'}" + (f" (summary: {' '.join(s.split())[:200]}…)" if s else ""))

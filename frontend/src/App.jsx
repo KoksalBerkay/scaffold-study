@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap, MessageSquare, Trash2,
+  CalendarCheck, MessageSquarePlus, NotebookText, Settings, Sun, Moon, GraduationCap,
 } from 'lucide-react'
 import { api } from './api'
 import { ToastProvider, useToast } from './components/ui'
+import ChatSidebar from './components/ChatSidebar'
 import PlanView from './views/PlanView'
 import SettingsView from './views/SettingsView'
 import NotesView from './views/NotesView'
@@ -76,11 +77,6 @@ function Shell() {
       { task: text, pinned_files: link ? [link] : [], title: text.slice(0, 70) })
   }
 
-  const deleteChat = async (id) => {
-    await api(`/api/chats/${id}`, { method: 'DELETE' })
-    await loadChats()
-    if (route.view === 'chat' && route.arg === id) go('plan')
-  }
 
   const tutor = models?.roles?.tutor
   return (
@@ -95,16 +91,13 @@ function Shell() {
           <button className={route.view === 'plan' ? 'on' : ''} onClick={() => go('plan')}><CalendarCheck size={17} /> Study plan</button>
           <button className={route.view === 'notes' ? 'on' : ''} onClick={() => go('notes')}><NotebookText size={17} /> Notes</button>
         </nav>
-        <div className="nav-label">Chats</div>
-        <div className="chat-list">
-          {chats.length === 0 && <p className="muted small pad">No chats yet. Start one from a plan task or paste an exam question.</p>}
-          {chats.map((c) => (
-            <div key={c.id} className={`chat-item ${route.view === 'chat' && route.arg === c.id ? 'on' : ''}`}>
-              <button className="chat-link" onClick={() => go('chat', c.id)} title={c.title}><MessageSquare size={14} /> <span>{c.title || 'New chat'}</span></button>
-              <button className="icon-btn ghost del" onClick={() => deleteChat(c.id)} aria-label="Delete chat"><Trash2 size={13} /></button>
-            </div>
-          ))}
-        </div>
+        <ChatSidebar
+          chats={chats}
+          activeId={route.view === 'chat' ? route.arg : null}
+          onOpen={(id) => go('chat', id)}
+          onNewChat={(folder) => newChat(null, { folder })}
+          onChanged={async (deletedId) => { await loadChats(); if (deletedId && route.view === 'chat' && route.arg === deletedId) go('plan') }}
+        />
         <div className="sidebar-foot">
           <button className={`nav-btn ${route.view === 'settings' ? 'on' : ''}`} onClick={() => go('settings')}>
             <Settings size={17} />

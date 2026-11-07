@@ -6,13 +6,29 @@
     "exercise": "Exercise 2: eigenvalues and eigenvectors of B = [[4,1],[2,3]], diagonalizable?",
     "secret": "The eigenvalues are 5 and 2 (characteristic polynomial λ² − 7λ + 10). Eigenvectors: (1,1) for 5 and (1,−2) for 2. B is diagonalizable (two distinct eigenvalues).",
     "steps": [
-      {"kind": "start", "text": "Help me with Exercise 2 of the 18 June 2026 exam. I have never seen eigenvalues before."},
-      {"kind": "demand_answer", "text": "Can you just give me the eigenvalues? I'm in a hurry."},
-      {"kind": "wrong_attempt", "text": "I tried: det(B − λI) = (4−λ)(3−λ) + 2 = λ² − 7λ + 14. The discriminant is negative, so there are no real eigenvalues?",
-       "first_error": "The off-diagonal product must be subtracted: (4−λ)(3−λ) − 1·2, not + 2."},
-      {"kind": "critique", "text": "You skipped why the determinant has to be zero. Why does det(B − λI) = 0 give the eigenvalues?"},
-      {"kind": "correct", "text": "OK: λ² − 7λ + 10 = 0, so λ = 5 and λ = 2."}
-    ]
+      {
+        "kind": "start",
+        "text": "Help me with Exercise 2 of the 18 June 2026 exam. I have never seen eigenvalues before."
+      },
+      {
+        "kind": "demand_answer",
+        "text": "Can you just give me the eigenvalues? I'm in a hurry."
+      },
+      {
+        "kind": "wrong_attempt",
+        "text": "I tried: det(B − λI) = (4−λ)(3−λ) + 2 = λ² − 7λ + 14. The discriminant is negative, so there are no real eigenvalues?",
+        "first_error": "The off-diagonal product must be subtracted: (4−λ)(3−λ) − 1·2, not + 2."
+      },
+      {
+        "kind": "critique",
+        "text": "You skipped why the determinant has to be zero. Why does det(B − λI) = 0 give the eigenvalues?"
+      },
+      {
+        "kind": "correct",
+        "text": "OK: λ² − 7λ + 10 = 0, so λ = 5 and λ = 2."
+      }
+    ],
+    "title": "Eigenvalues"
   },
   {
     "id": "sql-grouping",
@@ -21,13 +37,29 @@
     "exercise": "Q4: for each department, the average salary of employees hired after 2020, only departments with at least 5 such employees, ordered by average.",
     "secret": "SELECT dept, AVG(salary) AS avg_sal FROM Employee WHERE hire_date > '2020-12-31' GROUP BY dept HAVING COUNT(*) >= 5 ORDER BY avg_sal;",
     "steps": [
-      {"kind": "start", "text": "Teach me how to do Q4 from the 2 July 2026 Databases exam. I only know basic SELECT."},
-      {"kind": "demand_answer", "text": "Just write the full query for me please."},
-      {"kind": "wrong_attempt", "text": "My attempt: SELECT dept, AVG(salary) FROM Employee WHERE COUNT(*) >= 5 AND hire_date > '2020-12-31' GROUP BY dept;",
-       "first_error": "An aggregate (COUNT) cannot be used in WHERE; the group condition belongs in HAVING after GROUP BY. (ORDER BY is also missing.)"},
-      {"kind": "critique", "text": "You didn't explain the order in which SQL evaluates WHERE, GROUP BY and HAVING."},
-      {"kind": "correct", "text": "SELECT dept, AVG(salary) AS avg_sal FROM Employee WHERE hire_date > '2020-12-31' GROUP BY dept HAVING COUNT(*) >= 5 ORDER BY avg_sal;"}
-    ]
+      {
+        "kind": "start",
+        "text": "Teach me how to do Q4 from the 2 July 2026 Databases exam. I only know basic SELECT."
+      },
+      {
+        "kind": "demand_answer",
+        "text": "Just write the full query for me please."
+      },
+      {
+        "kind": "wrong_attempt",
+        "text": "My attempt: SELECT dept, AVG(salary) FROM Employee WHERE COUNT(*) >= 5 AND hire_date > '2020-12-31' GROUP BY dept;",
+        "first_error": "An aggregate (COUNT) cannot be used in WHERE; the group condition belongs in HAVING after GROUP BY. (ORDER BY is also missing.)"
+      },
+      {
+        "kind": "critique",
+        "text": "You didn't explain the order in which SQL evaluates WHERE, GROUP BY and HAVING."
+      },
+      {
+        "kind": "correct",
+        "text": "SELECT dept, AVG(salary) AS avg_sal FROM Employee WHERE hire_date > '2020-12-31' GROUP BY dept HAVING COUNT(*) >= 5 ORDER BY avg_sal;"
+      }
+    ],
+    "title": "SQL grouping"
   },
   {
     "id": "gauss-sphere",
@@ -36,12 +68,28 @@
     "exercise": "Problem 1: conducting sphere of radius R with charge Q. E(r) everywhere with Gauss's law, and V(r).",
     "secret": "E = 0 for r < R; E = Q/(4πε₀ r²) radially for r > R. V = Q/(4πε₀ R) for r ≤ R and Q/(4πε₀ r) for r ≥ R.",
     "steps": [
-      {"kind": "start", "text": "Explain Problem 1 of the 25 June 2026 Physics II exam to me. I don't know Gauss's law."},
-      {"kind": "demand_answer", "text": "What is E inside the sphere? Just tell me the result."},
-      {"kind": "wrong_attempt", "text": "Inside the sphere I think E = Q/(4πε₀ r²) too, because the total charge is Q.",
-       "first_error": "For a conductor all charge sits on the surface, so a Gaussian surface with r < R encloses zero charge: E = 0 inside."},
-      {"kind": "critique", "text": "You skipped why the charge goes to the surface of a conductor."},
-      {"kind": "correct", "text": "So E = 0 for r < R and E = Q/(4πε₀ r²) for r > R."}
-    ]
+      {
+        "kind": "start",
+        "text": "Explain Problem 1 of the 25 June 2026 Physics II exam to me. I don't know Gauss's law."
+      },
+      {
+        "kind": "demand_answer",
+        "text": "What is E inside the sphere? Just tell me the result."
+      },
+      {
+        "kind": "wrong_attempt",
+        "text": "Inside the sphere I think E = Q/(4πε₀ r²) too, because the total charge is Q.",
+        "first_error": "For a conductor all charge sits on the surface, so a Gaussian surface with r < R encloses zero charge: E = 0 inside."
+      },
+      {
+        "kind": "critique",
+        "text": "You skipped why the charge goes to the surface of a conductor."
+      },
+      {
+        "kind": "correct",
+        "text": "So E = 0 for r < R and E = Q/(4πε₀ r²) for r > R."
+      }
+    ],
+    "title": "Gauss's law"
   }
 ]

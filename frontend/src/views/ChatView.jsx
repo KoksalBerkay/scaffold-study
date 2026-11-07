@@ -245,6 +245,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
         <div className="chat-title">
           <h2>{chat?.title || 'New chat'}</h2>
           {chat?.task && <span className="task-chip"><CalendarCheck size={13} /> From your plan</span>}
+          {chat?.badge && <span className={`chat-badge ${/on$/.test(chat.badge) ? 'on' : ''}`}>Test run · {chat.badge}</span>}
         </div>
         {settings && (
           <div className="chat-toggles">
