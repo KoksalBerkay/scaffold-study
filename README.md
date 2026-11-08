@@ -14,12 +14,6 @@
 
 <sub>The <b>Reviewer</b> caught a missing step and sent the lesson back before the student saw it. Expand <i>Reviewed</i> to see exactly what it fixed.</sub>
 
-<br><br>
-
-<img src="assets/screenshots/study-plan.png" alt="Scaffold's study plan page showing this week's tasks with time estimates per exam question" width="900">
-
-<sub>The <b>study plan</b>: built from a conversation, with real time estimates for every exam question and a daily check-in.</sub>
-
 </div>
 
 ---
@@ -38,6 +32,14 @@
 | ✍️ **Live-preview editor** | Formatting, math, tables, callouts, properties and tags render as you type; raw markdown appears only on the line you're editing. Autosaves. |
 | 🔌 **Any model** | ChatGPT subscription (Codex CLI), Claude subscription (Claude Code CLI), OpenAI API key, Anthropic API key. Pick a model per agent in the UI. |
 | 🎛️ **You're in control** | Every system prompt and the memory are editable in Settings. |
+
+<div align="center">
+
+<img src="assets/screenshots/study-plan.png" alt="Scaffold's study plan page showing this week's tasks with time estimates per exam question" width="900">
+
+<sub>The <b>study plan</b>: built from a conversation, with real time estimates for every exam question and a daily check-in.</sub>
+
+</div>
 
 ## 🚀 How to run
 
