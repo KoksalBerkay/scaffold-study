@@ -8,6 +8,18 @@
 
 `Planner` → `Tutor` ⇄ `Reviewer` → `Notes` + `Memory`
 
+<br>
+
+<img src="assets/screenshots/reviewer.png" alt="A Scaffold tutor chat where the Reviewer sent the lesson back for a missing step before the student saw it" width="900">
+
+<sub>The <b>Reviewer</b> caught a missing step and sent the lesson back before the student saw it. Expand <i>Reviewed</i> to see exactly what it fixed.</sub>
+
+<br><br>
+
+<img src="assets/screenshots/study-plan.png" alt="Scaffold's study plan page showing this week's tasks with time estimates per exam question" width="900">
+
+<sub>The <b>study plan</b>: built from a conversation, with real time estimates for every exam question and a daily check-in.</sub>
+
 </div>
 
 ---
