@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Cpu, KeyRound, ScrollText, Brain, FolderCog, CheckCircle2, XCircle, Loader2, RotateCcw, Save, FolderOpen } from 'lucide-react'
+import { Cpu, KeyRound, ScrollText, Brain, FolderCog, CheckCircle2, XCircle, Loader2, RotateCcw, Save, FolderOpen, Terminal, Link2, CalendarDays, ChevronRight } from 'lucide-react'
 import { api, apiRetry } from '../api'
 import { FolderPicker, useToast } from '../components/ui'
 import ModelPicker, { modelLabel } from '../components/ModelPicker'
@@ -19,6 +19,7 @@ const SECTIONS = [
   { id: 'prompts', label: 'Prompts', icon: ScrollText },
   { id: 'memory', label: 'Memory', icon: Brain },
   { id: 'folders', label: 'Folders', icon: FolderCog },
+  { id: 'codex', label: 'Codex chats', icon: Terminal },
 ]
 
 function Models({ settings, setSettings, save }) {
@@ -262,6 +263,76 @@ function Folders({ settings, save }) {
   )
 }
 
+const ago = (t) => {
+  const d = (Date.now() / 1000 - t) / 86400
+  return d < 1 ? 'today' : d < 2 ? 'yesterday' : `${Math.round(d)} days ago`
+}
+
+function CodexChats() {
+  const toast = useToast()
+  const [data, setData] = useState(null)
+  const [folders, setFolders] = useState([])
+  const [open, setOpen] = useState({})
+  const [folderFor, setFolderFor] = useState({})
+  const [busy, setBusy] = useState(null)
+  const load = () => api('/api/codex/threads').then((r) => {
+    setData(r)
+    setOpen((o) => (Object.keys(o).length ? o : Object.fromEntries((r.projects || []).slice(0, 2).map((p) => [p.name, true]))))
+  })
+  useEffect(() => { load(); api('/api/chat-folders').then((f) => setFolders(f.filter((x) => !x.name.startsWith('Reviewer tests')))) }, [])
+  const link = async (t, asPlanner) => {
+    setBusy(t.id)
+    try {
+      const meta = await api('/api/codex/link', { method: 'POST', body: { thread: t.id, folder: folderFor[t.id] || null, as_planner: !!asPlanner } })
+      window.dispatchEvent(new Event('scaffold:chats'))
+      toast({ kind: 'success', text: asPlanner ? `“${t.title}” is now your planner chat.` : `Linked “${t.title}”. It's in your chats.` })
+      await load()
+      if (!asPlanner) window.location.hash = `/chat/${meta.id}`
+    } catch (e) { toast({ kind: 'error', text: e.message }) }
+    setBusy(null)
+  }
+  if (!data) return <p className="muted">Reading your Codex chats…</p>
+  if (!data.available) return <div className="card"><h3>Codex isn't set up</h3><p className="muted">Install the Codex CLI and sign in (<code>codex login</code>) to continue your Codex chats here.</p></div>
+  return (
+    <div className="stack">
+      <div className="card">
+        <h3>Continue your Codex chats in Scaffold</h3>
+        <p className="muted small">Linking doesn't copy anything. Scaffold continues the <b>same</b> Codex chat: it keeps its whole history, files and settings, and new messages also show up in the Codex app.
+          The Reviewer checks each answer, and the Notes agent writes your notes. Don't send in the same chat from Codex and Scaffold at the same moment.</p>
+      </div>
+      {data.projects.map((p) => (
+        <section key={p.name} className="card codex-project">
+          <button className="codex-project-head" onClick={() => setOpen((o) => ({ ...o, [p.name]: !o[p.name] }))}>
+            <ChevronRight size={15} className={open[p.name] ? 'rot90' : ''} /> <b>{p.name}</b> <span className="muted small">{p.threads.length} chat{p.threads.length > 1 ? 's' : ''}</span>
+          </button>
+          {open[p.name] && p.threads.map((t) => (
+            <div key={t.id} className="codex-thread">
+              <div className="grow">
+                <div className="codex-title">{t.title}</div>
+                <div className="muted tiny">{[t.model, t.effort].filter(Boolean).join(' · ')} · {ago(t.updated)}</div>
+              </div>
+              {t.linked ? (
+                <a className="btn small ghost" href={t.linked.kind === 'planner' ? '#/planchat' : `#/chat/${t.linked.chat}`}>
+                  {t.linked.kind === 'planner' ? <><CalendarDays size={13} /> Planner chat</> : <><Link2 size={13} /> Linked · open</>}
+                </a>
+              ) : (
+                <div className="row">
+                  <select value={folderFor[t.id] || ''} onChange={(e) => setFolderFor((f) => ({ ...f, [t.id]: e.target.value }))} title="Course folder in the sidebar">
+                    <option value="">No folder</option>
+                    {folders.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+                  </select>
+                  <button className="btn small primary" disabled={busy === t.id} onClick={() => link(t)}>{busy === t.id ? <Loader2 size={13} className="spin" /> : <Link2 size={13} />} Link</button>
+                  <button className="btn small ghost" disabled={busy === t.id} onClick={() => link(t, true)} title="Use this chat as your study planner"><CalendarDays size={13} /> As planner</button>
+                </div>
+              )}
+            </div>
+          ))}
+        </section>
+      ))}
+    </div>
+  )
+}
+
 export default function SettingsView({ section, onSaved }) {
   const [settings, setSettings] = useState(null)
   const sec = section || 'models'
@@ -285,6 +356,7 @@ export default function SettingsView({ section, onSaved }) {
       {sec === 'prompts' && <Prompts />}
       {sec === 'memory' && <Memory />}
       {sec === 'folders' && <Folders settings={settings} save={save} />}
+      {sec === 'codex' && <CodexChats />}
     </div>
   )
 }

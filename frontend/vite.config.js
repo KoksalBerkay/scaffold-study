@@ -5,6 +5,6 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    proxy: { '/api': { target: 'http://127.0.0.1:8765', changeOrigin: true } },
+    proxy: { '/api': { target: process.env.SCAFFOLD_API || 'http://127.0.0.1:8765', changeOrigin: true } },
   },
 })

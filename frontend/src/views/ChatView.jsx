@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
-  FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen,
+  FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen, Square,
+  CornerDownRight, Clock3, Layers, Terminal,
 } from 'lucide-react'
 import { api, follow, setBusy as markBusy, upload } from '../api'
 import Markdown from '../components/Markdown'
@@ -57,7 +58,7 @@ function ReviewBadge({ review }) {
   )
 }
 
-const ACT_ICON = { context: '📚', draft: '✍️', tool: '🔎', review: '🛡️', issues: '↩︎', revise: '🔧', approved: '✓', build: '🗓️', update: '🗓️', done: '✓' }
+const ACT_ICON = { context: '📚', draft: '✍️', tool: '🔎', review: '🛡️', issues: '↩︎', revise: '🔧', approved: '✓', build: '🗓️', update: '🗓️', done: '✓', compact: '🗜️' }
 
 function ActivityList({ items, live }) {
   return (
@@ -85,10 +86,13 @@ const PLANNER_STAGES = [
   { id: 'drafting', label: 'Planner is thinking' },
 ]
 
-function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting, kind }) {
+function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting, kind, steering, codex }) {
   const order = ['context', 'drafting', 'tool', 'reviewing', 'revising', 'building']
   const idx = order.indexOf(stage)
-  const steps = kind === 'planner' ? [...PLANNER_STAGES] : [...STAGES]
+  const steps = codex
+    ? [{ id: 'drafting', label: kind === 'planner' ? 'Codex is working on your plan' : 'Codex is working in your chat' },
+      ...(kind === 'planner' ? [] : [{ id: 'reviewing', label: 'Reviewer is checking' }])]
+    : kind === 'planner' ? [...PLANNER_STAGES] : [...STAGES]
   if (kind === 'planner' && stage === 'building') steps.push({ id: 'building', label: 'Writing your plan files (this takes a few minutes)' })
   if (kind !== 'planner' && (stage === 'revising' || rounds > 0)) steps.push({ id: 'revising', label: 'Tutor is fixing what the reviewer found' })
   const activeId = stage === 'tool' ? 'drafting' : stage
@@ -109,6 +113,7 @@ function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting, 
             )
           })}
         </div>
+        {steering && <div className="steer-note small"><CornerDownRight size={13} /> Steering: stopping here and continuing with “{steering}”</div>}
         {detail && <div className="muted small pdetail">{detail}</div>}
         {reconnecting && <div className="reconnect small"><Loader2 size={12} className="spin" /> Connection dropped. Reconnecting; the tutor keeps working on the server…</div>}
         {activity.length > 0 && <ActivityList items={activity.slice(-10)} live />}
@@ -154,6 +159,50 @@ function MaterialsBar({ settings, needFolder, busy, onChosen }) {
         <button className="btn primary" onClick={() => setPick(true)} disabled={busy}><FolderOpen size={15} /> Choose folder</button>
       </div>
       {pick && <FolderPicker title="Choose your materials folder" onClose={() => setPick(false)} onPick={(p) => choose(p)} />}
+    </div>
+  )
+}
+
+const kfmt = (n) => (n >= 1000 ? `${Math.round(n / 1000)}k` : String(n))
+
+/** How full the conversation's context is, and when it will be (or was) compacted. */
+function ContextMeter({ ctx }) {
+  if (!ctx?.window) return null
+  const pct = Math.min(100, Math.round((100 * ctx.used) / ctx.window))
+  const chars = ctx.unit === 'chars'
+  const title = chars
+    ? `This chat is ${pct}% of the way to compaction. At 100%, older messages are replaced by a summary so answers stay fast and focused.`
+    : `Context: ${kfmt(ctx.used)} of ${kfmt(ctx.window)} tokens used. Codex compacts older turns automatically when it gets full.`
+  return (
+    <div className={`ctx-meter ${pct > 85 ? 'hot' : ''}`} title={title}>
+      <Layers size={13} />
+      <span className="ctx-bar"><span style={{ width: `${Math.max(4, pct)}%` }} /></span>
+      <span className="tiny mono">{chars ? `${pct}%` : `${kfmt(ctx.used)}/${kfmt(ctx.window)}`}</span>
+    </div>
+  )
+}
+
+function CompactDivider({ text }) {
+  return <div className="compact-divider"><span><Layers size={12} /> {text || 'Context compacted: older messages were summarized'}</span></div>
+}
+
+function QueueList({ queue, onRemove, onSendNow, busy }) {
+  if (!queue?.length) return null
+  return (
+    <div className="queue">
+      {queue.map((q) => (
+        <div key={q.id} className="queue-item">
+          <Clock3 size={14} className="muted" />
+          <div className="queue-text">
+            <span className="tiny muted">{busy ? 'Queued · sends when this answer is done' : 'Queued · waiting'}</span>
+            <span className="queue-body">{q.text || `${q.attachments?.length || 0} attachment(s)`}</span>
+          </div>
+          <button className="btn small ghost" onClick={() => onSendNow(q.id)} title={busy ? 'Stop the current answer and continue with this message' : 'Send it now'}>
+            <CornerDownRight size={13} /> {busy ? 'Steer now' : 'Send now'}
+          </button>
+          <button className="icon-btn ghost tiny-btn" onClick={() => onRemove(q.id)} aria-label="Remove from queue"><X size={13} /></button>
+        </div>
+      ))}
     </div>
   )
 }
@@ -230,6 +279,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const [text, setText] = useState('')
   const [atts, setAtts] = useState([])
   const [busy, setBusy] = useState(null) // { stage, elapsed, detail, rounds }
+  const [queue, setQueue] = useState([])
+  const [ctx, setCtx] = useState(null)
   const [drag, setDrag] = useState(false)
   const [matPicker, setMatPicker] = useState(false)
   const [settings, setSettings] = useState(null)
@@ -245,6 +296,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       const c = await api(`/api/chats/${chatId}`)
       setChat(c.meta)
       setMessages(c.messages)
+      setQueue(c.queue || [])
+      setCtx(c.context || null)
       setMissing(false)
       return c
     } catch (e) {
@@ -267,6 +320,14 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
         send(firstMessage, [])
       }
     })
+  }, [chatId]) // eslint-disable-line
+
+  // an answer started from another window (or the queue): follow it here too
+  const tracking = useRef(false)
+  useEffect(() => {
+    const h = (e) => { if (e.detail === chatId && !tracking.current) { load(); track() } }
+    window.addEventListener('scaffold:turn', h)
+    return () => window.removeEventListener('scaffold:turn', h)
   }, [chatId]) // eslint-disable-line
 
   useEffect(() => {
@@ -301,6 +362,11 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   }
 
   const track = async () => {
+    if (tracking.current) return
+    tracking.current = true
+    try { await trackOnce() } finally { tracking.current = false }
+  }
+  const trackOnce = async () => {
     setBusy((b) => b || { stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
     markBusy(true)
     setFailed(null)
@@ -312,11 +378,18 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
         if (ev.type === 'status') Object.assign(nb, { stage: ev.stage, elapsed: ev.elapsed ?? b.elapsed, detail: ev.detail })
         if (ev.type === 'review' && ev.verdict === 'revise') nb.rounds = b.rounds + 1
         if (ev.type === 'activity') nb.activity = [...(b.activity || []), ev]
+        if (ev.type === 'steering') nb.steering = ev.text || 'your message'
         return nb
       })
-      if (ev.type === 'user_saved') onChanged?.()
+      if (ev.type === 'queue') setQueue(ev.queue || [])
+      if (ev.type === 'user_saved') { onChanged?.(); load() }
     })
     const c = await load()
+    if (c.running) {
+      // the next message (a steer or a queued one) already started: keep following it
+      setBusy({ stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
+      return trackOnce()
+    }
     setBusy(null)
     markBusy(false)
     if (res.error && c.messages?.length && c.messages[c.messages.length - 1].role === 'user') setFailed(res.error)
@@ -324,9 +397,22 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     taRef.current?.focus()
   }
 
-  const send = async (t = text, a = atts) => {
+  const send = async (t = text, a = atts, mode = 'queue') => {
     const body = (t || '').trim()
-    if ((!body && a.length === 0) || busy || a.some((x) => x.uploading)) return
+    if ((!body && a.length === 0) || a.some((x) => x.uploading)) return
+    if (busy) {
+      // the AI is still answering: queue it (Enter) or steer the current answer (⌘/Ctrl+Enter)
+      setText(''); setAtts([])
+      try {
+        const r = await api(`/api/chats/${chatId}/messages`, { method: 'POST', body: { mode, text: body, attachments: a.map(({ id, name, kind, url }) => ({ id, name, kind, url })) } })
+        if (r.queue) setQueue(r.queue)
+        if (r.steered) setBusy((b) => (b ? { ...b, steering: body || 'your attachment' } : b))
+      } catch (e) {
+        setText(body); setAtts(a)
+        toast({ kind: 'error', title: 'Not sent', text: e.message })
+      }
+      return
+    }
     setText(''); setAtts([])
     setMessages((m) => [...m, { role: 'user', content: body, attachments: a, ts: Date.now() / 1000 }])
     setBusy({ stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
@@ -341,6 +427,19 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       return
     }
     track()
+  }
+
+  const stop = async () => { try { await api(`/api/chats/${chatId}/stop`, { method: 'POST' }) } catch (e) { toast({ kind: 'error', text: e.message }) } }
+  const unqueue = async (qid) => { const r = await api(`/api/chats/${chatId}/queue/${qid}`, { method: 'DELETE' }); setQueue(r.queue) }
+  const sendQueuedNow = async (qid) => {
+    const r = await api(`/api/chats/${chatId}/queue/${qid}/send`, { method: 'POST' })
+    setQueue(r.queue || [])
+    if (r.steered) setBusy((b) => (b ? { ...b, steering: 'your queued message' } : b))
+    else if (!busy) track()
+  }
+  const setCodexModel = async (cfg) => {
+    const meta = await api(`/api/chats/${chatId}/codex`, { method: 'POST', body: { model: cfg.model, effort: cfg.effort } })
+    setChat(meta)
   }
 
   const retry = async () => {
@@ -390,10 +489,15 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           <h2>{chat?.title || 'New chat'}</h2>
           {chat?.task && <span className="task-chip"><CalendarCheck size={13} /> From your plan</span>}
           {chat?.badge && <span className={`chat-badge ${/on$/.test(chat.badge) ? 'on' : ''}`}>Test run · {chat.badge}</span>}
+          {chat?.codex && <span className="codex-chip" title={`Linked to your Codex chat. Folder: ${chat.codex.cwd}`}><Terminal size={12} /> Codex chat</span>}
+          <ContextMeter ctx={ctx} />
         </div>
         {settings && chat?.kind === 'planner' && (
           <div className="chat-toggles">
-            {catalog && settings.roles?.planner && (
+            {catalog && chat?.codex && (
+              <ModelPicker compact catalog={{ codex: catalog.codex }} value={{ provider: 'codex', model: chat.codex.model, effort: chat.codex.effort }} align="right" onChange={setCodexModel} />
+            )}
+            {catalog && !chat?.codex && settings.roles?.planner && (
               <ModelPicker compact catalog={catalog} value={settings.roles.planner} align="right"
                 onChange={async (cfg) => { const s2 = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, planner: cfg } } }); setSettings(s2) }} />
             )}
@@ -407,7 +511,10 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             <button className={`toggle ${settings.auto_notes ? 'on' : ''}`} onClick={() => toggleSetting('auto_notes')} title="Write notes automatically">
               <BookOpen size={14} /> Auto-notes {settings.auto_notes ? 'on' : 'off'}
             </button>
-            {tutor && catalog && (
+            {catalog && chat?.codex && (
+              <ModelPicker compact catalog={{ codex: catalog.codex }} value={{ provider: 'codex', model: chat.codex.model, effort: chat.codex.effort }} align="right" onChange={setCodexModel} />
+            )}
+            {tutor && catalog && !chat?.codex && (
               <ModelPicker compact catalog={catalog} value={tutor} align="right"
                 onChange={async (cfg) => { const s = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, tutor: cfg } } }); setSettings(s) }} />
             )}
@@ -434,7 +541,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           </div>
         )}
         {chat?.kind === 'planner' && messages.length <= 1 && <Pitch />}
-        {messages.map((m, i) => (
+        {messages.map((m, i) => m.role === 'event' ? <CompactDivider key={i} text={m.content} /> : (
           <div key={i} className={`msg ${m.role}`}>
             {m.role === 'assistant' && <div className="avatar tutor"><Sparkles size={15} /></div>}
             <div className="bubble">
@@ -445,18 +552,21 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
                     : <Attachment key={a.id} a={a} />)}
                 </div>
               )}
+              {m.role === 'user' && m.steer && <div className="steer-tag tiny"><CornerDownRight size={11} /> Steered while answering</div>}
+              {m.role === 'assistant' && m.compacted && <div className="steer-tag tiny"><Layers size={11} /> Context was compacted for this answer</div>}
               {m.content && <Markdown source={m.content} />}
+              {m.source === 'codex' && <div className="tiny muted src-tag">in the Codex app</div>}
               {m.role === 'assistant' && m.plan_link && (
                 <button className="btn primary small plan-link" onClick={() => { window.location.hash = '/plan'; window.dispatchEvent(new Event('scaffold:openplan')) }}>
                   <CalendarCheck size={14} /> Open my study plan
                 </button>
               )}
-              {m.role === 'assistant' && chat?.kind !== 'planner' && <ReviewBadge review={m.review} />}
+              {m.role === 'assistant' && chat?.kind !== 'planner' && m.source !== 'codex' && <ReviewBadge review={m.review} />}
               {m.role === 'assistant' && <HowMade m={m} />}
             </div>
           </div>
         ))}
-        {busy && <Pending {...busy} kind={chat?.kind} />}
+        {busy && <Pending {...busy} kind={chat?.kind} codex={!!chat?.codex} />}
         {!busy && failed && (
           <div className="msg assistant">
             <div className="avatar warn-av"><Sparkles size={15} /></div>
@@ -475,32 +585,50 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           <MaterialsBar settings={settings} needFolder={needFolder} busy={!!busy}
             onChosen={async (s2, msg) => { setSettings(s2); send(msg, []) }} />
         )}
+        <QueueList queue={queue} busy={!!busy} onRemove={unqueue} onSendNow={sendQueuedNow} />
         <div className="composer">
           {atts.length > 0 && <div className="atts">{atts.map((a) => <Attachment key={a.id} a={a} onRemove={() => setAtts((x) => x.filter((y) => y.id !== a.id))} />)}</div>}
           <textarea
             ref={taRef}
             rows={1}
             value={text}
-            placeholder={busy ? (chat?.kind === 'planner' ? 'The planner is working…' : 'The tutor is working…') : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
+            placeholder={busy ? 'Add a message: Enter queues it, ⌘Enter steers the current answer' : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
             onChange={(e) => setText(e.target.value)}
             onPaste={onPaste}
-            onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                e.preventDefault()
+                send(text, atts, busy && (e.metaKey || e.ctrlKey) ? 'steer' : 'queue')
+              }
+            }}
           />
           <div className="composer-bar">
             <div className="row">
-              {chat?.kind !== 'planner' ? (
-                <>
-                  <button className="icon-btn ghost" title="Attach images or PDFs" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
-                  <button className="icon-btn ghost" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={17} /></button>
-                  <span className="muted tiny hint"><ImageIcon size={12} /> Paste or drop screenshots · Shift+Enter for a new line</span>
-                </>
-              ) : <span className="muted tiny hint">Just write normally, e.g. “about 3 hours on weekdays, no Sundays” · Shift+Enter for a new line</span>}
+              <button className="icon-btn ghost" title="Attach images, PDFs or text files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
+              <button className="icon-btn ghost" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={17} /></button>
+              <span className="muted tiny hint">{busy
+                ? <><Clock3 size={12} /> Enter: queue · ⌘Enter: steer now</>
+                : chat?.kind === 'planner'
+                  ? <>Write normally, or drop a screenshot or file · Shift+Enter for a new line</>
+                  : <><ImageIcon size={12} /> Paste or drop screenshots · Shift+Enter for a new line</>}</span>
             </div>
-            <button className="send" onClick={() => send()} disabled={!!busy || (!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)} aria-label="Send">
-              {busy ? <Loader2 size={17} className="spin" /> : <ArrowUp size={17} />}
-            </button>
+            <div className="row send-group">
+              {busy && (text.trim() || atts.length > 0) && (
+                <button className="btn small steer-btn" onClick={() => send(text, atts, 'steer')} title="Stop the current answer and continue with this message (⌘Enter)">
+                  <CornerDownRight size={14} /> Steer
+                </button>
+              )}
+              {busy && !text.trim() && atts.length === 0 ? (
+                <button className="send stop" onClick={stop} aria-label="Stop" title="Stop this answer"><Square size={12} fill="currentColor" /></button>
+              ) : (
+                <button className="send" onClick={() => send(text, atts, 'queue')} disabled={(!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)}
+                  aria-label={busy ? 'Queue' : 'Send'} title={busy ? 'Queue: send when this answer is done (Enter)' : 'Send'}>
+                  {busy ? <Clock3 size={16} /> : <ArrowUp size={17} />}
+                </button>
+              )}
+            </div>
           </div>
-          <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.md,.txt" hidden onChange={(e) => { addFiles([...e.target.files]); e.target.value = '' }} />
+          <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.md,.txt,.csv,.tex,.py,.java,.c,.cpp,.sql,.json" hidden onChange={(e) => { addFiles([...e.target.files]); e.target.value = '' }} />
         </div>
       </div>
       {drag && <div className="drop-overlay"><ImageIcon size={28} /> Drop to attach</div>}

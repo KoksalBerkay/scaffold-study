@@ -922,6 +922,7 @@ def _start_turn(cid: str, body: dict, retry: bool = False):
             traceback.print_exc()
 
     jobs.start(key, _turn_for(cid, body, retry), on_error=on_error, on_done=on_done)
+    broadcast({"type": "turn", "chat": cid})  # every open window follows the answer live
     return {"ok": True}
 
 

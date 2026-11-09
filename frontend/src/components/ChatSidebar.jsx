@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  ChevronRight, Folder, FolderOpen, FolderPlus, MessageSquare, MoreHorizontal, Pencil, Plus, Trash2, FolderInput, FlaskConical,
+  ChevronRight, Folder, FolderOpen, FolderPlus, MessageSquare, MoreHorizontal, Pencil, Plus, Trash2, FolderInput, FlaskConical, Terminal,
 } from 'lucide-react'
 import { api } from '../api'
 
@@ -89,7 +89,7 @@ export default function ChatSidebar({ chats, activeId, onOpen, onNewChat, onChan
         ? <InlineInput initial={c.title} onDone={(v) => renameChat(c.id, v)} />
         : (
           <button className="chat-link" onClick={() => onOpen(c.id)} onDoubleClick={() => setEditing({ type: 'chat', id: c.id })} title={c.title}>
-            {c.harness ? <FlaskConical size={14} /> : <MessageSquare size={14} />} <span>{c.title || 'New chat'}</span>
+            {c.harness ? <FlaskConical size={14} /> : c.codex ? <Terminal size={14} title="Linked Codex chat" /> : <MessageSquare size={14} />} <span>{c.title || 'New chat'}</span>
             {c.badge && <em className={`chat-badge ${/on$/.test(c.badge) ? 'on' : ''}`} title={c.badge}>{c.badge.replace('Reviewer ', '')}</em>}
           </button>
         )}
