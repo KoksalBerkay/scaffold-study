@@ -123,6 +123,8 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
     yield {"type": "status", "stage": "drafting", "detail": f"Codex is working in your chat ({label})"}
     yield act("draft", f"Sent to your Codex chat ({label})")
 
+    tool_outputs: list[str] = []
+
     async def run(prompt_text: str, stage: str, imgs: list[str]):
         detail = "Codex is working"
         async for kind, val in codexlink.run_turn_any(info, prompt_text, imgs, model, effort):
@@ -130,6 +132,9 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
                 yield {"type": "status", "stage": stage, "detail": detail, "elapsed": val, "heartbeat": True}
             elif kind == "event":
                 if val["kind"] == "thinking":
+                    continue
+                if val["kind"] == "output":
+                    tool_outputs.append(f"{val['text']}\n{val.get('output') or '(no output)'}")
                     continue
                 detail = val["text"][:160]
                 yield {"type": "status", "stage": stage, "detail": detail}
@@ -154,8 +159,10 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
             async for ev in run(REVIEW_HEADER + fb, "revising", []):
                 yield ev
 
-        material = "Codex worked directly in the student's files. What it did:\n" + "\n".join(
-            a["text"] for a in activity if a["kind"] in ("tool", "compact"))
+        # newest results first, so the most relevant output survives the size limit
+        material = ("The Tutor (Codex) used normal tools in the student's project. These are the exact commands and "
+                    "what they returned: the Tutor saw all of this.\n\n" + "\n\n".join(reversed(tool_outputs))
+                    if tool_outputs else "The Tutor answered without running any tools.")
         async for ev in review_loop(draft, user_msg, prior, material, review_images, course, settings, act, revise, review):
             if isinstance(ev, tuple):
                 draft = ev[1]

@@ -67,8 +67,8 @@ async def judge(question: str, text: str) -> tuple[bool, str]:
     return bool(d.get("pass")), d.get("why", out[:200])
 
 
-async def reviewer_verdict(student: str, draft: str, prior=None, rounds=None, memory: str = "", images=None) -> dict:
-    rin = chat.review_input({"content": student}, prior or [], "", draft, rounds or [])
+async def reviewer_verdict(student: str, draft: str, prior=None, rounds=None, memory: str = "", images=None, material: str = "") -> dict:
+    rin = chat.review_input({"content": student}, prior or [], material, draft, rounds or [])
     out = await llm.complete("reviewer", render_prompt("reviewer", memory=memory or "## Teaching preferences\n"),
                              [{"role": "user", "content": rin, "images": images or []}])
     return chat.parse_json(out) or {"verdict": "unreadable", "issues": [], "raw": out[:500]}
@@ -80,10 +80,10 @@ def issues_text(v: dict) -> str:
 
 # ---------------- reviewer cases ----------------
 
-def R(name, student, draft, expect, prior=None, rounds=None, memory="", must_not=None, image=False):
+def R(name, student, draft, expect, prior=None, rounds=None, memory="", must_not=None, image=False, material=""):
     """expect: 'approve' or a set of acceptable issue types; must_not: words that must not appear in fixes."""
     async def run():
-        v = await reviewer_verdict(student, draft, prior, rounds, memory, [_fixture_image()] if image else None)
+        v = await reviewer_verdict(student, draft, prior, rounds, memory, [_fixture_image()] if image else None, material)
         fixes = issues_text(v).lower()
         if v.get("verdict") == "unreadable":
             return False, "reviewer reply unreadable: " + v.get("raw", "")
@@ -159,6 +159,17 @@ REVIEWER = [
       "*Why nonzero.* $A\\mathbf 0=\\lambda\\mathbf 0$ holds for every $\\lambda$, so allowing $\\mathbf 0$ would make every number an eigenvalue. That is why the definition excludes it.\n\n"
       "Next: check whether $\\begin{pmatrix}0\\\\1\\end{pmatrix}$ is an eigenvector of the same $A$, and if so, with which eigenvalue.",
       None, must_not=["shorter", "shorten", "trim", "concise", "remove", "cut ", "too long", "length"]),
+    R("a tutor that read the student's files with the terminal is trusted",
+      "I edited src/diet/Food.java: rawMaterials() now returns rawMaterialsByName.values(), and Java reports a type mismatch. Check my edit.",
+      "Your edit returns a `Collection<RawMaterial>`, but `rawMaterials()` promises a `Collection<NutritionalElement>`. There are two separate problems. First, in your files `RawMaterial` does not implement `NutritionalElement` yet. Second, even after it does, Java will not treat a `Collection<RawMaterial>` as a `Collection<NutritionalElement>`: generic collections do not convert automatically, so we will fix the return line after the first step.\n\n**Next small step:** make `RawMaterial` implement the interface. Which keyword goes in its class declaration, and which method does the interface then require you to add?",
+      "approve",
+      material=("The Tutor (Codex) used normal tools in the student's project. These are the exact commands and what they returned: the Tutor saw all of this.\n\n"
+                "$ cat src/diet/Food.java src/diet/RawMaterial.java src/diet/NutritionalElement.java\n"
+                "package diet;\nimport java.util.*;\npublic class Food {\n    private Map<String, RawMaterial> rawMaterialsByName = new TreeMap<>();\n"
+                "    public Collection<NutritionalElement> rawMaterials() {\n        return rawMaterialsByName.values();\n    }\n}\n"
+                "package diet;\npublic class RawMaterial {\n    private String name;\n}\n"
+                "package diet;\npublic interface NutritionalElement {\n    String getName();\n}"),
+      must_not=["paste", "cannot see", "can't see", "cannot verify", "can't verify", "share the", "not shown"]),
     R("a subtle sign error is caught",
       "Can you check my determinant for [[3,-2],[4,1]]? I get 3*1 - (-2)*4 = 11.",
       "Almost: $\\det=3\\cdot1-(-2)\\cdot4=3-8=-5$. Watch the sign: subtracting a negative product.",
