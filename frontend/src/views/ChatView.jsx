@@ -258,7 +258,7 @@ function NotesCard({ card, chatId, onUpdate }) {
   )
 }
 
-export const COMMANDS = [
+const COMMANDS = [
   { name: 'compact', hint: '', desc: 'Summarize this chat now, so answers stay fast and focused' },
   { name: 'notes', hint: '<what to write>', desc: "Ask this course's Notes agent, e.g. /notes add a summary of eigenvalues" },
   { name: 'review', hint: 'on | off', desc: 'Turn the Reviewer on or off' },
