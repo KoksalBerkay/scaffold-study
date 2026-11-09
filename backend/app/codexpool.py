@@ -59,10 +59,30 @@ class CodexPool:
             self.reader = asyncio.create_task(self._read())
             await self._request("initialize", {"clientInfo": {"name": "scaffold", "version": "1.0"}}, timeout=30)
             await self._send({"method": "initialized"})
+            await self._archive_strays()
             if not self.loaded:
                 data = read_json(POOL_FILE, {}) or {}
                 self.idle = {k: list(v.get("threads", [])) for k, v in data.items() if isinstance(v, dict)}
                 self.loaded = True
+
+    async def _archive_strays(self):
+        """A job interrupted mid-way (app closed, server stopped) can leave its worker thread unarchived, which
+        would show it in the Codex app. Archive any such leftovers when the pool starts."""
+        try:
+            from .codexlink import _connect
+            con = _connect("state")
+            if not con:
+                return
+            with con:
+                ids = [r["id"] for r in con.execute(
+                    "select id from threads where archived = 0 and thread_source = 'scaffold_worker'")]
+            for tid in ids:
+                try:
+                    await self._request("thread/archive", {"threadId": tid}, timeout=15)
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     async def _read(self):
         proc = self.proc
