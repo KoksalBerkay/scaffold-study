@@ -105,8 +105,12 @@ To create a new file, or to rewrite a short file completely:
 <full file content>
 FILE>>>
 
+To rename or move a note (its content and every link to it are kept; never create a copy instead):
+<<<RENAME notes/<old path>.md -> notes/<new path>.md RENAME>>>
+
 To save a lasting rule about how this student wants notes for this course (only after feedback):
 <<<RULE <one sentence rule> RULE>>>
+Write the rule exactly as narrow as the student meant it. "Spell it Gram-Schmidt" is about that name, not about hyphens in every file name. A correction about one note is not a rule unless the student says it applies generally ("always", "from now on", "for all notes").
 
 If you need to read a note you were not given:
 <<TOOL read_note {"path": "<path inside the notes folder>"}>>

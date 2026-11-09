@@ -30,6 +30,7 @@ MAX_FILE_CHARS = 30_000      # per note given in full
 SECTION_RE = re.compile(r"<<<SECTION\s+(.+?)\s*\n(.*?)(?:\nSECTION>>>|(?=\n<<<(?:SECTION|FILE|RULE))|\Z)", re.S)
 FILE_RE = re.compile(r"<<<FILE\s+(.+?)\s*\n(.*?)(?:\nFILE>>>|(?=\n<<<(?:SECTION|FILE|RULE))|\Z)", re.S)
 RULE_RE = re.compile(r"<<<RULE\s+(.*?)\s*RULE>>>", re.S)
+RENAME_RE = re.compile(r"<<<RENAME\s+(.+?)\s*->\s*(.+?)\s*RENAME>>>", re.S)
 SUMMARY_RE = re.compile(r"^SUMMARY:\s*(.+)$", re.M)
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -178,6 +179,21 @@ def plan_changes(out: str, folder: str) -> tuple[list[dict], list[str], str]:
         except ValueError:
             return ""
 
+    for src, dst in RENAME_RE.findall(out):
+        a, b = _rel(src), _rel(dst)
+        a, b = (a if a.endswith(".md") else a + ".md"), (b if b.endswith(".md") else b + ".md")
+        if a.startswith(pd) or b.startswith(pd) or a == b:
+            continue
+        pa = note_target(a)
+        note_target(b)  # raises on paths outside the notes folder
+        text = current(a)
+        if not pa.exists() and a not in pending:
+            continue
+        old_b = current(b)
+        # if a copy was already made under the new name, keep the newer content there
+        pending[b] = {"path": b, "old": old_b, "new": old_b or text, "action": "renamed", "sections": [], "renamed_from": a}
+        pending.pop(a, None)
+        pending.setdefault("__deletes__", {"deletes": []})["deletes"].append(a)
     for path, content in FILE_RE.findall(out):
         rel = _rel(path)
         rel = rel if rel.endswith(".md") else rel + ".md"
@@ -204,24 +220,34 @@ def plan_changes(out: str, folder: str) -> tuple[list[dict], list[str], str]:
     rules = [r.strip() for r in RULE_RE.findall(out) if r.strip()]
     m = SUMMARY_RE.findall(out)
     summary = m[-1].strip() if m else ""
-    return list(pending.values()), rules, summary
+    deletes = pending.pop("__deletes__", {}).get("deletes", [])
+    changes = list(pending.values())
+    for d in deletes:
+        changes.append({"path": d, "old": "", "new": None, "action": "removed (renamed)", "sections": []})
+    return changes, rules, summary
 
 
 def _save_rules(course: str, rules: list[str]):
     if not rules or course == GENERAL:
         return
-    text = get_course_memory(course)
+    text = get_course_memory(course).rstrip() + "\n"
     head = "## Notes style for this course"
     if head not in text:
-        text = text.rstrip() + f"\n\n{head}\n"
+        text += f"\n{head}\n"
     lines = text.split("\n")
     i = lines.index(head) + 1
     while i < len(lines) and not lines[i].startswith("## "):
         i += 1
+    while i > 0 and not lines[i - 1].strip() and lines[i - 1] is not lines[lines.index(head)]:
+        i -= 1  # insert after the section's last item, not after its trailing blank line
     existing = text.lower()
     add = [f"- {r}" for r in rules if r.lower() not in existing]
     lines[i:i] = add
-    write_atomic(course_memory_path(course), "\n".join(lines).replace("\n\n\n", "\n\n").rstrip() + "\n")
+    out = "\n".join(lines)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    out = re.sub(r"([^\n])\n(## )", r"\1\n\n\2", out)  # a blank line before every section heading
+    out = re.sub(r"(## [^\n]+)\n\n(- )", r"\1\n\2", out)
+    write_atomic(course_memory_path(course), out.strip() + "\n")
 
 
 # ---------------- the cards under each answer ----------------
@@ -290,6 +316,9 @@ async def _agent_turn(course: str, folder: str, message: str, images: list[str],
 async def _review(course: str, lesson: str, changes: list[dict]) -> dict:
     parts = []
     for c in changes:
+        if c["new"] is None:
+            parts.append(f"FILE notes/{c['path']} is removed because it was renamed (its content moved to the new name).")
+            continue
         if c["sections"]:
             for s in c["sections"]:
                 new_sec = c["new"]
@@ -331,9 +360,17 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
                 changes, summary = changes2, summary2 or summary
             rules += rules2
     written = []
-    for c in changes:
+    for c in sorted(changes, key=lambda c: c["new"] is None):  # write the new name before removing the old one
+        if c["new"] is None:
+            try:
+                p = note_target(c["path"])
+                if p.exists() and any(w["path"] != c["path"] for w in written):
+                    p.unlink()
+            except (ValueError, OSError):
+                pass
+            continue
         write_note(c["path"], c["new"])
-        written.append({"path": c["path"], "action": c["action"],
+        written.append({"path": c["path"], "action": c["action"], **({"from": c["renamed_from"]} if c.get("renamed_from") else {}),
                         "sections": [{"heading": s["heading"], "action": s["action"]} for s in c["sections"]]})
     _save_rules(course, rules)
     card.update(status="done" if written else "nothing", files=written, summary=summary or ("Updated notes" if written else "Nothing new to add"),

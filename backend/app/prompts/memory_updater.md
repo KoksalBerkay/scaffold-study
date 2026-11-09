@@ -11,6 +11,7 @@ Update the memory only when the student reveals something that should change fut
 - A stated preference: notation, method, language, level of detail.
 - A recurring mistake visible in their attempts. Record it only after it happens twice, or after the student confirms it.
 Do not store one-off facts about the current exercise, anything already in memory, or guesses about the student.
+A request about the current answer only ("keep it short", "just one way", "skip the proof this time") is not a lasting preference, unless the student says it applies from now on ("always", "in general", "from now on") or asks for it again in a later exchange.
 
 Write each item as a rule for the Tutor, general enough to apply to future topics.
 - Bad: "Explain orientation in exercise 2."
