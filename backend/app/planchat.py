@@ -128,7 +128,12 @@ async def planchat_turn(cid: str, body: dict, retry: bool = False, **_):
         user_msg = msgs[-1]
     else:
         text = (body.get("text") or "").strip()
-        user_msg = {"role": "user", "content": text, "ts": time.time()}
+        atts = body.get("attachments") or []
+        extra_text, images = chat.expand_attachments(atts)
+        user_msg = {"role": "user", "content": text, "ts": time.time(), "attachments": atts, "image_paths": images,
+                    "model_content": (text + ("\n\n" + extra_text if extra_text else "")) or "(see the attached images)"}
+        if body.get("steer"):
+            user_msg["steer"] = True
         prior = chat.load_messages(cid)
         chat.append_message(cid, user_msg)
     yield {"type": "user_saved"}
@@ -139,7 +144,7 @@ async def planchat_turn(cid: str, body: dict, retry: bool = False, **_):
     yield {"type": "status", "stage": "context", "detail": "Looking at your materials and your plan"}
     yield act("context", "Looking at your materials" + (" and your current plan" if planner.read_plan() else ""))
     system = render_prompt("planner_chat", today=planner.today_str()) + "\n\n# What you can see\n" + _context()
-    history = [{"role": m["role"], "content": m["content"]} for m in (prior + [user_msg])[-30:]]
+    history = chat.history_for_model(cid, (prior + [user_msg])[-30:])
     out = None
     async for ev in planner.with_heartbeat(llm.complete("planner", system, history), "drafting", "The planner is thinking"):
         if isinstance(ev, tuple):

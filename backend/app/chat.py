@@ -160,7 +160,7 @@ def _harness_title(meta: dict) -> str:
 
 @router.get("/api/chats")
 def list_chats():
-    out = []
+    out, linked = [], []
     if CHATS.exists():
         for d in CHATS.iterdir():
             m = d / "meta.json"
@@ -176,7 +176,18 @@ def list_chats():
                 write_atomic(d / "meta.json", json.dumps(meta, indent=2))
             item = {k: meta.get(k) for k in ("id", "title", "updated", "created", "task", "folder", "harness", "badge")}
             item["last"] = last_activity(d, meta)
+            if meta.get("codex"):
+                item["codex"] = True
+                linked.append(item)
             out.append(item)
+    if linked:
+        from . import codexlink
+        threads = {}
+        for c in linked:
+            threads[c["id"]] = (read_json(CHATS / c["id"] / "meta.json") or {}).get("codex", {}).get("thread")
+        times = codexlink.updated_times([t for t in threads.values() if t])
+        for c in linked:
+            c["last"] = max(c["last"] or 0, times.get(threads[c["id"]]) or 0)  # also counts turns made in the Codex app
     return sorted(out, key=lambda x: -(x["last"] or 0))
 
 
@@ -243,9 +254,11 @@ def create_chat(body: dict = Body(default={})):
 
 @router.get("/api/chats/{cid}")
 def get_chat(cid: str):
-    from . import jobs
-    return {"meta": load_meta(cid), "messages": load_messages(cid), "summary": read_summary(cid),
-            "running": jobs.running(f"chat:{cid}")}
+    from . import codexchat, jobs
+    meta = load_meta(cid)
+    msgs = codexchat.display_messages(cid, meta) if meta.get("codex") else load_messages(cid)
+    return {"meta": meta, "messages": msgs, "summary": read_summary(cid), "queue": load_queue(cid),
+            "running": jobs.running(f"chat:{cid}"), "context": codexchat.context_of(meta)}
 
 
 @router.patch("/api/chats/{cid}")
@@ -500,9 +513,10 @@ async def run_tool(name: str, args: dict) -> tuple[str, list[str]]:
     return f"Unknown tool {name}", []
 
 
-def history_for_model(cid: str, messages: list[dict]) -> list[dict]:
-    """Compaction: if the chat is long, the summary replaces older turns."""
-    total = sum(len(m["content"]) for m in messages)
+def history_for_model(cid: str, messages: list[dict], info: dict | None = None) -> list[dict]:
+    """Compaction: if the chat is long, the summary replaces older turns. `info` reports what happened."""
+    messages = [m for m in messages if m.get("role") in ("user", "assistant")]
+    total = sum(len(m.get("content") or "") for m in messages)
     summary = read_summary(cid)
     msgs = messages
     prefix = []
@@ -510,16 +524,24 @@ def history_for_model(cid: str, messages: list[dict]) -> list[dict]:
         msgs = messages[-KEEP_TURNS * 2:]
         prefix = [{"role": "user", "content": f"(Summary of the earlier part of this chat)\n{summary}"},
                   {"role": "assistant", "content": "Understood. Continuing from there."}]
+    if info is not None:
+        info.update({"chars": total, "limit": COMPACT_CHARS, "compacted": bool(prefix),
+                     "summarized": len(messages) - len(msgs) if prefix else 0})
     out = []
     n_user = sum(1 for m in msgs if m["role"] == "user")
     seen_user = 0
     for m in msgs:
-        item = {"role": m["role"], "content": m.get("model_content") or m["content"]}
+        item = {"role": m["role"], "content": m.get("model_content") or m.get("content") or ""}
         if m["role"] == "user":
             seen_user += 1
             if seen_user > n_user - 2:  # only the last two user turns keep their images
                 item["images"] = m.get("image_paths") or []
-        out.append(item)
+        if out and out[-1]["role"] == item["role"]:
+            # two user messages in a row (a steer, or an unanswered message): merge them
+            out[-1] = {**out[-1], "content": out[-1]["content"] + "\n\n" + item["content"],
+                       "images": (out[-1].get("images") or []) + (item.get("images") or [])}
+        else:
+            out.append(item)
     return prefix + out
 
 
@@ -545,6 +567,62 @@ ISSUE_LABEL = {"correctness": "Correctness", "completeness": "Missing step", "ga
 def _model_name(role: str) -> str:
     r = load_settings()["roles"].get(role, {})
     return " · ".join(x for x in (r.get("model") or r.get("provider"), r.get("effort")) if x)
+
+
+REVISE_PROMPT = ("REVIEWER FEEDBACK. Fix every point and return the full revised message for the student, nothing else. "
+                 "Keep all correct teaching from your draft; change only what the points require. "
+                 "Never reveal a result the student has not produced yet:\n")
+
+
+async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_used: str, images: list[str],
+                      course: str | None, settings: dict, act, revise, review: dict):
+    """Reviewer ⇄ author rounds. `revise(feedback, n)` yields events and finally ("result", new_draft).
+    Yields events, and ("draft", text) whenever the draft changes. Fills `review` in place."""
+    if not settings.get("review"):
+        yield act("approved", "Review is off: showing the draft")
+        return
+    recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}"
+                         for m in prior[-6:] if m.get("role") in ("user", "assistant"))
+    rsys = render_prompt("reviewer", course=course)
+    max_rounds = int(settings.get("max_review_rounds", 2))
+    for r in range(max_rounds + 1):
+        draft = normalize_math(draft)  # Scaffold fixes math delimiters itself: never spend a review round on them
+        yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
+        rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
+               f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}\n\nTUTOR'S DRAFT:\n{draft}")
+        verdict = None
+        async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
+                                       "reviewing", "Correct? Complete? Not giving the answer away?"):
+            if isinstance(ev, tuple):
+                verdict = parse_json(ev[1])
+            else:
+                yield ev
+        if verdict is None:
+            yield act("review", "Reviewer's reply could not be read; keeping the draft")
+            verdict = {"verdict": "approve", "issues": [], "student_note": ""}
+        issues = [i for i in (verdict.get("issues") or []) if isinstance(i, dict)]
+        review["rounds"].append({"verdict": verdict.get("verdict"), "issues": issues})
+        if verdict.get("student_note"):
+            review["student_note"] = verdict["student_note"]
+        yield {"type": "review", "round": r + 1, "verdict": verdict.get("verdict"), "issues": issues}
+        if verdict.get("verdict") != "revise" or not issues:
+            yield act("approved", "Reviewer approved ✓" if r == 0 else "Reviewer approved the revision ✓")
+            break
+        yield act("issues", f"Reviewer sent it back with {len(issues)} issue{'s' if len(issues) != 1 else ''}",
+                  issues=[{"label": ISSUE_LABEL.get(i.get("type"), i.get("type") or "Issue"), "fix": i.get("fix", "")} for i in issues])
+        if r == max_rounds:
+            yield act("issues", "Review limit reached: showing the best version")
+            break
+        fb = "\n".join(f"- [{i.get('type')}] {i.get('where', '')}: {i.get('fix', '')}" for i in issues)
+        yield act("revise", f"Tutor is fixing {len(issues)} issue{'s' if len(issues) != 1 else ''}")
+        async for ev in revise(fb, len(issues)):
+            if isinstance(ev, tuple):
+                draft = ev[1] or draft
+                yield ("draft", draft)
+            else:
+                yield ev
+    last = review["rounds"][-1]["verdict"] if review["rounds"] else "approve"
+    review["final"] = "approved" if last != "revise" else "best_effort"
 
 
 async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True, retry: bool = False):
@@ -573,6 +651,9 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
         extra_text, images = expand_attachments(atts)
         user_msg = {"role": "user", "content": text, "attachments": atts, "ts": time.time(), "image_paths": images,
                     "model_content": (text + ("\n\n" + extra_text if extra_text else "")) or "(see the attached images)"}
+        if body.get("steer"):
+            user_msg["steer"] = True
+            user_msg["model_content"] = "(I'm adding this while you were answering my previous message.)\n" + user_msg["model_content"]
         prior = load_messages(cid)
         append_message(cid, user_msg)
         if not meta.get("title"):
@@ -595,7 +676,10 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
         images = (images or []) + extra_images
     course = chat_course(meta)
     system = render_prompt("tutor", course=course) + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
-    convo = history_for_model(cid, prior + [user_msg])
+    cinfo: dict = {}
+    convo = history_for_model(cid, prior + [user_msg], cinfo)
+    if cinfo.get("compacted"):
+        yield act("compact", f"Context compacted: {cinfo['summarized']} older messages are replaced by the chat summary")
 
     # ---- draft, with up to 2 tool rounds
     draft = ""
@@ -640,57 +724,30 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
     yield act("draft", f"Draft ready ({len(draft.split())} words)")
 
     # ---- review loop
+    async def revise(fb: str, n: int):
+        convo2 = convo + [{"role": "assistant", "content": draft},
+                          {"role": "user", "content": REVISE_PROMPT + fb}]
+        async for ev in with_heartbeat(llm.complete("tutor", system, convo2), "revising",
+                                       f"Fixing {n} issue{'s' if n != 1 else ''} the reviewer found"):
+            if isinstance(ev, tuple):
+                yield ("result", TOOL_RE.sub("", ev[1]).strip())
+            else:
+                yield ev
+
     review = {"enabled": bool(settings.get("review")), "rounds": [], "student_note": ""}
-    if settings.get("review"):
-        recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}" for m in prior[-6:])
-        rsys = render_prompt("reviewer", course=course)
-        max_rounds = int(settings.get("max_review_rounds", 2))
-        for r in range(max_rounds + 1):
-            yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
-            rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
-                   f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}\n\nTUTOR'S DRAFT:\n{draft}")
-            verdict = None
-            async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
-                                           "reviewing", "Correct? Complete? Not giving the answer away?"):
-                if isinstance(ev, tuple):
-                    verdict = parse_json(ev[1])
-                else:
-                    yield ev
-            if verdict is None:
-                yield act("review", "Reviewer's reply could not be read; keeping the draft")
-                verdict = {"verdict": "approve", "issues": [], "student_note": ""}
-            issues = [i for i in (verdict.get("issues") or []) if isinstance(i, dict)]
-            review["rounds"].append({"verdict": verdict.get("verdict"), "issues": issues})
-            if verdict.get("student_note"):
-                review["student_note"] = verdict["student_note"]
-            yield {"type": "review", "round": r + 1, "verdict": verdict.get("verdict"), "issues": issues}
-            if verdict.get("verdict") != "revise" or not issues:
-                yield act("approved", "Reviewer approved ✓" if r == 0 else f"Reviewer approved the revision ✓")
-                break
-            yield act("issues", f"Reviewer sent it back with {len(issues)} issue{'s' if len(issues) != 1 else ''}",
-                      issues=[{"label": ISSUE_LABEL.get(i.get("type"), i.get("type") or "Issue"), "fix": i.get("fix", "")} for i in issues])
-            if r == max_rounds:
-                yield act("issues", "Review limit reached: showing the best version")
-                break
-            fb = "\n".join(f"- [{i.get('type')}] {i.get('where', '')}: {i.get('fix', '')}" for i in issues)
-            convo2 = convo + [{"role": "assistant", "content": draft},
-                              {"role": "user", "content": "REVIEWER FEEDBACK. Fix every point and return the full revised message for the student, nothing else. Keep all correct teaching from your draft; change only what the points require. Never reveal a result the student has not produced yet:\n" + fb}]
-            yield act("revise", f"Tutor is fixing {len(issues)} issue{'s' if len(issues) != 1 else ''}")
-            async for ev in with_heartbeat(llm.complete("tutor", system, convo2), "revising",
-                                           f"Fixing {len(issues)} issue{'s' if len(issues) != 1 else ''} the reviewer found"):
-                if isinstance(ev, tuple):
-                    draft = TOOL_RE.sub("", ev[1]).strip() or draft
-                else:
-                    yield ev
-        last = review["rounds"][-1]["verdict"] if review["rounds"] else "approve"
-        review["final"] = "approved" if last != "revise" else "best_effort"
-    else:
-        yield act("approved", "Review is off: showing the draft")
+    async for ev in review_loop(draft, user_msg, prior, material_used, images, course, settings, act, revise, review):
+        if isinstance(ev, tuple):
+            draft = ev[1]
+        else:
+            yield ev
 
     final = normalize_math(draft)
     asst = {"role": "assistant", "content": final, "ts": time.time(), "review": review, "tools": tool_log,
-            "activity": activity, "seconds": round(time.time() - t0)}
+            "activity": activity, "seconds": round(time.time() - t0), "compacted": bool(cinfo.get("compacted"))}
     append_message(cid, asst)
+    meta = load_meta(cid)
+    meta["context"] = {"used": cinfo.get("chars", 0) + len(final), "window": COMPACT_CHARS, "unit": "chars",
+                       "compacted": bool(cinfo.get("compacted"))}
     save_meta(meta)
     yield {"type": "message", "message": asst}
 
@@ -711,7 +768,9 @@ async def background(cid: str, user_msg: dict, asst: dict):
 
 
 def prev_tutor(cid: str) -> str:
-    msgs = load_messages(cid)
+    from .codexchat import display_messages
+    meta = load_meta(cid)
+    msgs = display_messages(cid, meta) if meta.get("codex") else load_messages(cid)
     tutors = [m for m in msgs if m["role"] == "assistant"]
     return tutors[-2]["content"] if len(tutors) >= 2 else ""
 
@@ -801,26 +860,131 @@ def _remember_error(cid: str, message: str):
         pass
 
 
+def queue_path(cid: str) -> Path:
+    return chat_dir(cid) / "queue.json"
+
+
+def load_queue(cid: str) -> list[dict]:
+    q = read_json(queue_path(cid), [])
+    return q if isinstance(q, list) else []
+
+
+def save_queue(cid: str, q: list[dict]):
+    if chat_dir(cid).exists():
+        write_atomic(queue_path(cid), json.dumps(q, indent=2))
+
+
+def _clean_body(body: dict) -> dict:
+    return {"text": (body.get("text") or "").strip(), "attachments": body.get("attachments") or []}
+
+
+def _turn_for(cid: str, body: dict, retry: bool):
+    from . import codexchat, planchat
+    meta = load_meta(cid)
+    if meta.get("codex"):
+        return lambda: codexchat.codex_turn(cid, body, retry=retry)  # noqa: E731
+    if meta.get("kind") == "planner":
+        return lambda: planchat.planchat_turn(cid, body, retry=retry)  # noqa: E731
+    return lambda: tutor_turn(cid, body, retry=retry)  # noqa: E731
+
+
 def _start_turn(cid: str, body: dict, retry: bool = False):
-    from . import jobs, planchat
-    if jobs.running(f"chat:{cid}"):
+    from . import jobs
+    key = f"chat:{cid}"
+    if jobs.running(key):
         raise HTTPException(409, "Still working on the last message in this chat.")
-    if load_meta(cid).get("kind") == "planner":
-        if jobs.running("planner"):
-            raise HTTPException(409, "The planner is still updating your plan. One moment.")
-        turn = lambda: planchat.planchat_turn(cid, body, retry=retry)  # noqa: E731
-    else:
-        turn = lambda: tutor_turn(cid, body, retry=retry)  # noqa: E731
-    jobs.start(f"chat:{cid}", turn, on_error=lambda m: _remember_error(cid, m))
+    meta = load_meta(cid)
+    if meta.get("kind") == "planner" and not meta.get("codex") and jobs.running("planner"):
+        raise HTTPException(409, "The planner is still updating your plan. One moment.")
+
+    def on_error(m: str):
+        if (chat_dir(cid) / "steer.json").exists():
+            return  # stopped on purpose to take a steering message
+        _remember_error(cid, "You stopped this answer." if m == "Stopped." else m)
+
+    def on_done(ok: bool):
+        # what to send next: a steering message first, otherwise the next queued message (only after success)
+        try:
+            steer = chat_dir(cid) / "steer.json"
+            if steer.exists():
+                nxt = read_json(steer, {}) or {}
+                steer.unlink(missing_ok=True)
+                _start_turn(cid, {**nxt, "steer": True})
+                return
+            if ok:
+                q = load_queue(cid)
+                if q:
+                    nxt, rest = q[0], q[1:]
+                    save_queue(cid, rest)
+                    _start_turn(cid, {"text": nxt["text"], "attachments": nxt.get("attachments") or []})
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    jobs.start(key, _turn_for(cid, body, retry), on_error=on_error, on_done=on_done)
     return {"ok": True}
 
 
 @router.post("/api/chats/{cid}/messages")
 async def send_message(cid: str, body: dict = Body(...)):
+    """Send a message. While an answer is being written: mode "queue" (default) sends it next,
+    mode "steer" stops the current answer and continues with this message added."""
+    from . import jobs
     load_meta(cid)
-    if not (body.get("text") or "").strip() and not body.get("attachments"):
+    clean = _clean_body(body)
+    if not clean["text"] and not clean["attachments"]:
         raise HTTPException(400, "Write a message or attach something first.")
-    return _start_turn(cid, body)
+    key = f"chat:{cid}"
+    if not jobs.running(key):
+        return _start_turn(cid, clean)
+    if body.get("mode") == "steer":
+        write_atomic(chat_dir(cid) / "steer.json", json.dumps(clean))
+        jobs.cancel(key)
+        await jobs.push(key, {"type": "steering", "text": clean["text"]})
+        return {"ok": True, "steered": True}
+    item = {"id": uuid.uuid4().hex[:10], **clean, "ts": time.time()}
+    q = load_queue(cid) + [item]
+    save_queue(cid, q)
+    await jobs.push(key, {"type": "queue", "queue": q})
+    return {"ok": True, "queued": item, "queue": q}
+
+
+@router.delete("/api/chats/{cid}/queue/{qid}")
+async def unqueue(cid: str, qid: str):
+    from . import jobs
+    q = [x for x in load_queue(cid) if x["id"] != qid]
+    save_queue(cid, q)
+    await jobs.push(f"chat:{cid}", {"type": "queue", "queue": q})
+    return {"queue": q}
+
+
+@router.post("/api/chats/{cid}/queue/{qid}/send")
+async def send_queued_now(cid: str, qid: str):
+    """Send a queued message right away: steer the running answer with it, or start it if nothing runs."""
+    from . import jobs
+    q = load_queue(cid)
+    item = next((x for x in q if x["id"] == qid), None)
+    if not item:
+        raise HTTPException(404, "That message is no longer queued.")
+    rest = [x for x in q if x["id"] != qid]
+    save_queue(cid, rest)
+    body = {"text": item["text"], "attachments": item.get("attachments") or []}
+    key = f"chat:{cid}"
+    if jobs.running(key):
+        write_atomic(chat_dir(cid) / "steer.json", json.dumps(body))
+        jobs.cancel(key)
+        await jobs.push(key, {"type": "queue", "queue": rest})
+        await jobs.push(key, {"type": "steering", "text": body["text"]})
+        return {"ok": True, "steered": True, "queue": rest}
+    _start_turn(cid, body)
+    return {"ok": True, "queue": rest}
+
+
+@router.post("/api/chats/{cid}/stop")
+async def stop_answer(cid: str):
+    from . import jobs
+    (chat_dir(cid) / "steer.json").unlink(missing_ok=True)
+    return {"stopped": jobs.cancel(f"chat:{cid}")}
 
 
 @router.post("/api/chats/{cid}/retry")

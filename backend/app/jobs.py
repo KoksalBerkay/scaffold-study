@@ -53,7 +53,33 @@ def _cleanup():
         JOBS.pop(k, None)
 
 
-def start(key: str, make: Callable[[], AsyncIterator[dict]], on_error: Callable[[str], None] | None = None) -> Job:
+def cancel(key: str) -> bool:
+    """Stop a running job (the model call is killed). Returns False if nothing was running."""
+    j = JOBS.get(key)
+    if not j or j.done or not j.task:
+        return False
+    j.task.cancel()
+    return True
+
+
+async def wait_done(key: str, timeout: float = 15):
+    j = JOBS.get(key)
+    if j and j.task and not j.done:
+        try:
+            await asyncio.wait_for(asyncio.shield(j.task), timeout)
+        except BaseException:
+            pass
+
+
+async def push(key: str, ev: dict):
+    """Add an event to a running job's log (e.g. 'a message was queued')."""
+    j = JOBS.get(key)
+    if j and not j.done:
+        await j.push(ev)
+
+
+def start(key: str, make: Callable[[], AsyncIterator[dict]], on_error: Callable[[str], None] | None = None,
+          on_done: Callable[[bool], None] | None = None) -> Job:
     _cleanup()
     if running(key):
         raise RuntimeError("busy")
@@ -82,7 +108,12 @@ def start(key: str, make: Callable[[], AsyncIterator[dict]], on_error: Callable[
                 await job.push({"type": "error", "message": job.error})
             job.done = True
             job.finished = time.time()
-            await job.push({"type": "end", "ok": job.ok})
+            await job.push({"type": "end", "ok": job.ok, "stopped": job.error == "Stopped."})
+            if on_done:
+                try:
+                    on_done(job.ok)
+                except Exception:
+                    traceback.print_exc()
 
     job.task = asyncio.create_task(run())
     return job
