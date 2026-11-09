@@ -33,7 +33,7 @@ DEFAULT_SETTINGS = {
     "roles": {
         "planner": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
         "tutor": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
-        "reviewer": {"provider": "codex", "model": "gpt-6-luna", "effort": "medium"},
+        "reviewer": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
         "background": {"provider": "codex", "model": "gpt-6-luna", "effort": "medium"},
     },
 }

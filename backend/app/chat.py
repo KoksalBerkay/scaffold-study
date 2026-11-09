@@ -588,8 +588,12 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
     for r in range(max_rounds + 1):
         draft = normalize_math(draft)  # Scaffold fixes math delimiters itself: never spend a review round on them
         yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
+        earlier = "\n".join(f"Round {i + 1}: " + "; ".join(f"[{x.get('type')}] {x.get('fix', '')}" for x in rd["issues"])
+                            for i, rd in enumerate(review["rounds"]) if rd["issues"])
         rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
-               f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}\n\nTUTOR'S DRAFT:\n{draft}")
+               f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}"
+               + (f"\n\nYOUR EARLIER FEEDBACK (this draft is a revision):\n{earlier}" if earlier else "")
+               + f"\n\nTUTOR'S DRAFT:\n{draft}")
         verdict = None
         async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
                                        "reviewing", "Correct? Complete? Not giving the answer away?"):

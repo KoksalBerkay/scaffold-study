@@ -42,10 +42,10 @@ function Models({ settings, setSettings, save }) {
     const pickEff = (want) => (effs.includes(want) ? want : effs.includes('medium') ? 'medium' : effs[0] || '')
     const roles = Object.fromEntries(Object.keys(settings.roles).map((r) => [r, {
       provider: base.provider, model: base.model,
-      effort: kind === 'same' ? base.effort : pickEff(r === 'planner' || r === 'tutor' ? 'high' : 'medium'),
+      effort: kind === 'same' ? base.effort : pickEff(r === 'background' ? 'medium' : 'high'),
     }]))
     setSettings({ ...settings, roles }); save({ roles })
-    toast({ kind: 'success', text: kind === 'same' ? `Every agent now uses ${modelLabel(catalog, base)} · ${base.effort}.` : 'Recommended: strong reasoning for Planner and Tutor, faster for Reviewer and background.' })
+    toast({ kind: 'success', text: kind === 'same' ? `Every agent now uses ${modelLabel(catalog, base)} · ${base.effort}.` : 'Recommended: strong reasoning for Planner, Tutor and Reviewer; faster for background jobs.' })
   }
   const test = async (role) => {
     setTesting((t) => ({ ...t, [role]: 'run' }))
@@ -69,7 +69,7 @@ function Models({ settings, setSettings, save }) {
             <p className="muted small">Pick from the models your subscription or API key actually offers. Each agent can use a different one.</p>
           </div>
           <div className="row">
-            <button className="btn small ghost" onClick={() => preset('recommended')} title="Tutor's model for all; high reasoning for Planner and Tutor, medium for the rest">Recommended</button>
+            <button className="btn small ghost" onClick={() => preset('recommended')} title="Tutor's model for all; high reasoning for Planner, Tutor and Reviewer, medium for background jobs">Recommended</button>
             <button className="btn small ghost" onClick={() => preset('same')} title="Use the Tutor's model and reasoning for every agent">Same for all</button>
           </div>
         </div>
