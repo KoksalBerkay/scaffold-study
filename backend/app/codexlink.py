@@ -222,7 +222,10 @@ async def run_turn_any(info: dict, prompt: str, images: list[str], model: str | 
         return
     except WriterBusy:
         pass
-    yield ("event", {"kind": "tool", "text": "This chat is open in the Codex app, so Scaffold handed the message to it"})
+    live = thread_info(info["id"]) or info  # the model the Codex app has selected for this chat is the one that runs
+    used = " · ".join(x for x in (live.get("model"), live.get("effort")) if x)
+    yield ("event", {"kind": "tool", "text": f"This chat is open in the Codex app, so Scaffold handed the message to it. "
+                                             f"The app runs it with the model selected there: {used}"})
     async for ev in run_turn_via_queue(info, prompt, images, model, effort):
         yield ev
 

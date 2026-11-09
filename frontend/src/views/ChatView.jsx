@@ -640,7 +640,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           <h2>{chat?.title || 'New chat'}</h2>
           {chat?.task && <span className="task-chip"><CalendarCheck size={13} /> From your plan</span>}
           {chat?.badge && <span className={`chat-badge ${/on$/.test(chat.badge) ? 'on' : ''}`}>Test run · {chat.badge}</span>}
-          {chat?.codex && <span className="codex-chip" title={`Linked to your Codex chat. Folder: ${chat.codex.cwd}`}><Terminal size={12} /> Codex chat</span>}
+          {chat?.codex && <span className="codex-chip" title={`Linked to your Codex chat (folder: ${chat.codex.cwd}). The model here is used when Scaffold runs the chat; while the chat is open in the Codex app, the model selected there is used instead.`}><Terminal size={12} /> Codex chat</span>}
           <ContextMeter ctx={ctx} />
         </div>
         {settings && chat?.kind === 'planner' && (

@@ -121,7 +121,7 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
     model, effort = link.get("model") or info.get("model"), link.get("effort") or info.get("effort")
     label = " · ".join(x for x in (model, effort) if x)
     yield {"type": "status", "stage": "drafting", "detail": f"Codex is working in your chat ({label})"}
-    yield act("draft", f"Sent to your Codex chat ({label})")
+    yield act("draft", f"Sending to your Codex chat ({label})")
 
     tool_outputs: list[str] = []
 
