@@ -85,6 +85,14 @@ cd backend && .venv/bin/python -m harness.followups
 
 This runs scripted student conversations through the real app, with the Reviewer **off** and **on**: start from zero → "just tell me the answer" → a wrong attempt → "you skipped why" → the correct answer. A judge agent grades every tutor reply (gave the answer early? found the first wrong step? taught the prerequisites? one clear next step?). The report is written to `notes/Evaluation/Reviewer Follow-up Test.md`.
 
+### Agent audit
+
+```bash
+cd backend && .venv/bin/python -m harness.agent_audit --runs 3 --model=gpt-6-luna --reviewer-model=gpt-6.1-terra
+```
+
+27 cases, each run several times, check the mistakes students hate: a Reviewer that blocks a correct answer, asks for shorter answers, can't see an earlier screenshot or wants notes written; a Notes agent that loses or deletes content or writes answers the student has not reached; a memory that saves one-off requests. It uses a throwaway workspace, never your data.
+
 ## 🧭 Architecture
 
 ```

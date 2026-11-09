@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[2]
 REAL_WS = Path(os.environ.get("SCAFFOLD_WORKSPACE", ROOT / "workspace")).resolve()
 TMP = Path(tempfile.mkdtemp(prefix="scaffold-audit-"))
 _MODEL = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--model=")), "")
+_REVIEWER = next((a.split("=", 1)[1] for a in sys.argv if a.startswith("--reviewer-model=")), "")
 if (REAL_WS / "settings.json").exists():
     s = json.loads((REAL_WS / "settings.json").read_text())
     s.pop("notes_path", None)  # never write into the real notes folder
@@ -30,6 +31,8 @@ if (REAL_WS / "settings.json").exists():
     if _MODEL:  # e.g. --model=gpt-6-luna: every agent on that model (high reasoning, background medium)
         for role, cfg in s.get("roles", {}).items():
             s["roles"][role] = {"provider": "codex", "model": _MODEL, "effort": "medium" if role == "background" else "high"}
+    if _REVIEWER:
+        s.setdefault("roles", {})["reviewer"] = {"provider": "codex", "model": _REVIEWER, "effort": "high"}
     (TMP / "settings.json").write_text(json.dumps(s))
 os.environ["SCAFFOLD_WORKSPACE"] = str(TMP)
 
@@ -382,6 +385,7 @@ async def main():
     ap.add_argument("--runs", type=int, default=3)
     ap.add_argument("--only", default="")
     ap.add_argument("--model", default="", help="run every agent on this model, e.g. --model=gpt-6-luna")
+    ap.add_argument("--reviewer-model", default="", help="model for the Reviewer (and the judge), e.g. gpt-6.1-terra")
     args = ap.parse_args()
     cases = [c for c in ALL if not args.only or c[0] == args.only]
     t0 = time.time()
