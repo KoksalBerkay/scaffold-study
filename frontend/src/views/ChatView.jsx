@@ -191,17 +191,14 @@ function QueueList({ queue, onRemove, onSendNow, busy }) {
   if (!queue?.length) return null
   return (
     <div className="queue">
-      {queue.map((q) => (
+      {queue.map((q, i) => (
         <div key={q.id} className="queue-item">
-          <Clock3 size={14} className="muted" />
-          <div className="queue-text">
-            <span className="tiny muted">{busy ? 'Queued · sends when this answer is done' : 'Queued · waiting'}</span>
-            <span className="queue-body">{q.text || `${q.attachments?.length || 0} attachment(s)`}</span>
-          </div>
-          <button className="btn small ghost" onClick={() => onSendNow(q.id)} title={busy ? 'Stop the current answer and continue with this message' : 'Send it now'}>
-            <CornerDownRight size={13} /> {busy ? 'Steer now' : 'Send now'}
+          <span className="queue-badge"><Clock3 size={12} /> {busy ? (i === 0 ? 'Next' : `#${i + 1}`) : 'Queued'}</span>
+          <span className="queue-body" title={q.text}>{q.text || `${q.attachments?.length || 0} attachment(s)`}</span>
+          <button className="queue-act" onClick={() => onSendNow(q.id)} title={busy ? 'Stop the current answer and continue with this message' : 'Send it now'}>
+            <CornerDownRight size={12} /> {busy ? 'Steer now' : 'Send now'}
           </button>
-          <button className="icon-btn ghost tiny-btn" onClick={() => onRemove(q.id)} aria-label="Remove from queue"><X size={13} /></button>
+          <button className="queue-x" onClick={() => onRemove(q.id)} aria-label="Remove from queue" title="Remove"><X size={13} /></button>
         </div>
       ))}
     </div>
@@ -275,12 +272,14 @@ function SlashMenu({ text, onPick, active }) {
   if (!items.length || /\s/.test(text.trim()) && COMMANDS.some((c) => c.name === q)) return null
   return (
     <div className="slash-menu" role="listbox">
+      <div className="slash-head">Commands</div>
       {items.map((c, i) => (
         <button key={c.name} className={`slash-item ${i === active ? 'on' : ''}`} onMouseDown={(e) => { e.preventDefault(); onPick(c) }}>
-          <span className="mono">/{c.name}</span>{c.hint && <span className="muted mono tiny">{c.hint}</span>}
-          <span className="muted small grow">{c.desc}</span>
+          <span className="slash-name">/{c.name}{c.hint && <span className="slash-hint"> {c.hint}</span>}</span>
+          <span className="slash-desc">{c.desc}</span>
         </button>
       ))}
+      <div className="slash-foot"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>↵</kbd> run <kbd>Tab</kbd> complete <kbd>Esc</kbd> close</div>
     </div>
   )
 }
@@ -688,15 +687,16 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           <MaterialsBar settings={settings} needFolder={needFolder} busy={!!busy}
             onChosen={async (s2, msg) => { setSettings(s2); send(msg, []) }} />
         )}
-        <QueueList queue={queue} busy={!!busy} onRemove={unqueue} onSendNow={sendQueuedNow} />
+        <div className="composer-dock">
         {text.startsWith('/') && <SlashMenu text={text} active={slashActive} onPick={(c) => { if (c.hint) { setText(`/${c.name} `); taRef.current?.focus() } else runCommand(c.name, '') }} />}
-        <div className="composer">
+        <div className={`composer ${busy ? 'is-busy' : ''}`}>
+          <QueueList queue={queue} busy={!!busy} onRemove={unqueue} onSendNow={sendQueuedNow} />
           {atts.length > 0 && <div className="atts">{atts.map((a) => <Attachment key={a.id} a={a} onRemove={() => setAtts((x) => x.filter((y) => y.id !== a.id))} />)}</div>}
           <textarea
             ref={taRef}
             rows={1}
             value={text}
-            placeholder={busy ? 'Add a message: Enter queues it, ⌘Enter steers the current answer' : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
+            placeholder={busy ? 'Add a follow-up… (↵ queues it, ⌘↵ steers now)' : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
             onChange={(e) => { setText(e.target.value); setSlashActive(0) }}
             onPaste={onPaste}
             onKeyDown={(e) => {
@@ -710,6 +710,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
                 if (c.hint || e.key === 'Tab') setText(`/${c.name} `); else runCommand(c.name, '')
                 return
               }
+              if (e.key === 'Escape' && text.startsWith('/')) { e.preventDefault(); setText(''); return }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 send(text, atts, busy && (e.metaKey || e.ctrlKey) ? 'steer' : 'queue')
@@ -717,32 +718,34 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             }}
           />
           <div className="composer-bar">
-            <div className="row">
-              <button className="icon-btn ghost" title="Attach images, PDFs or text files" onClick={() => fileRef.current?.click()}><Paperclip size={17} /></button>
-              <button className="icon-btn ghost" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={17} /></button>
-              <span className="muted tiny hint">{busy
-                ? <><Clock3 size={12} /> Enter: queue · ⌘Enter: steer now</>
-                : chat?.kind === 'planner'
-                  ? <>Write normally, or drop a screenshot or file · Shift+Enter for a new line</>
-                  : <><ImageIcon size={12} /> Paste or drop screenshots · Shift+Enter for a new line</>}</span>
+            <div className="composer-tools">
+              <button className="tool-btn" title="Attach images, PDFs or text files (or paste / drop them)" onClick={() => fileRef.current?.click()}><Paperclip size={16} /></button>
+              <button className="tool-btn" title="Attach a page from your materials" onClick={() => setMatPicker(true)}><Library size={16} /></button>
             </div>
-            <div className="row send-group">
+            <div className="composer-status">
+              {busy
+                ? <><span className="live-dot" /> {chat?.codex ? 'Codex is answering' : chat?.kind === 'planner' ? 'The planner is working' : 'The tutor is answering'} · <kbd>↵</kbd> queue · <kbd>⌘↵</kbd> steer</>
+                : text ? <><kbd>⇧↵</kbd> new line</>
+                  : <><kbd>/</kbd> commands · paste or drop screenshots</>}
+            </div>
+            <div className="send-group">
               {busy && (text.trim() || atts.length > 0) && (
-                <button className="btn small steer-btn" onClick={() => send(text, atts, 'steer')} title="Stop the current answer and continue with this message (⌘Enter)">
+                <button className="steer-btn" onClick={() => send(text, atts, 'steer')} title="Stop the current answer and continue with this message (⌘↵)">
                   <CornerDownRight size={14} /> Steer
                 </button>
               )}
               {busy && !text.trim() && atts.length === 0 ? (
-                <button className="send stop" onClick={stop} aria-label="Stop" title="Stop this answer"><Square size={12} fill="currentColor" /></button>
+                <button className="send stop" onClick={stop} aria-label="Stop" title="Stop this answer"><Square size={11} fill="currentColor" /></button>
               ) : (
                 <button className="send" onClick={() => send(text, atts, 'queue')} disabled={(!text.trim() && atts.length === 0) || atts.some((a) => a.uploading)}
-                  aria-label={busy ? 'Queue' : 'Send'} title={busy ? 'Queue: send when this answer is done (Enter)' : 'Send'}>
-                  {busy ? <Clock3 size={16} /> : <ArrowUp size={17} />}
+                  aria-label={busy ? 'Queue' : 'Send'} title={busy ? 'Queue: send when this answer is done (↵)' : 'Send (↵)'}>
+                  {busy ? <Clock3 size={15} /> : <ArrowUp size={16} />}
                 </button>
               )}
             </div>
           </div>
           <input ref={fileRef} type="file" multiple accept="image/*,.pdf,.md,.txt,.csv,.tex,.py,.java,.c,.cpp,.sql,.json" hidden onChange={(e) => { addFiles([...e.target.files]); e.target.value = '' }} />
+        </div>
         </div>
       </div>
       {drag && <div className="drop-overlay"><ImageIcon size={28} /> Drop to attach</div>}
