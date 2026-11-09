@@ -150,6 +150,18 @@ def chat_course(meta: dict) -> str | None:
     return None
 
 
+def _folder_of(meta: dict) -> dict | None:
+    return next((f for f in load_folders() if f["id"] == meta.get("folder")), None)
+
+
+def course_materials_dir(meta: dict) -> str | None:
+    """The materials folder for this chat's course: set in the folder's course settings, or matched by name."""
+    f = _folder_of(meta)
+    if f and f.get("materials_folder"):
+        return f["materials_folder"]
+    return materials.match_course(materials_dir(), chat_course(meta))
+
+
 def _harness_title(meta: dict) -> str:
     m = re.match(r"\[harness\] (\S+) review=(True|False)", meta.get("title") or "")
     if not m:
@@ -222,6 +234,35 @@ def rename_folder(fid: str, body: dict = Body(...)):
                 f["name"] = (body["name"] or "").strip()[:60] or f["name"]
             if "collapsed" in body:
                 f["collapsed"] = bool(body["collapsed"])
+    save_folders(folders)
+    return folders
+
+
+@router.get("/api/course-folders")
+def course_folders():
+    """Folders a course can be connected to: notes folders and materials folders (two levels deep)."""
+    def dirs(root: Path | None) -> list[str]:
+        if not root or not root.is_dir():
+            return []
+        out = []
+        for d in sorted(root.iterdir()):
+            if d.is_dir() and not d.name.startswith("."):
+                out.append(d.name)
+                out += [f"{d.name}/{x.name}" for x in sorted(d.iterdir()) if x.is_dir() and not x.name.startswith(".")]
+        return out
+    from .planner import plan_dir
+    return {"notes": [d for d in dirs(notes_dir()) if not d.startswith(plan_dir())], "materials": dirs(materials_dir())}
+
+
+@router.patch("/api/chat-folders/{fid}/course")
+def set_course_folders(fid: str, body: dict = Body(...)):
+    """Connect a course folder in the sidebar to its notes folder and its materials folder."""
+    folders = load_folders()
+    for f in folders:
+        if f["id"] == fid:
+            for k in ("notes_folder", "materials_folder"):
+                if k in body:
+                    f[k] = (body.get(k) or "").strip().strip("/")
     save_folders(folders)
     return folders
 
@@ -442,7 +483,7 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list
             found.append(f"Opened {Path(rel).name} from your plan task")
 
     if root and user_text.strip():
-        course_dir = materials.match_course(root, chat_course(meta))
+        course_dir = course_materials_dir(meta)
         hits = materials.search(root, user_text, k=4, prefer=course_dir)
         pinned_rel = {_rel(root, l) for l in meta.get("pinned_files") or []}
         if hits and hits[0]["file"] not in pinned_rel:

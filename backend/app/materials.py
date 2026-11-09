@@ -231,7 +231,7 @@ def search(root: Path, query: str, k: int = 5, prefer: str | None = None) -> lis
         if not score:
             continue
         rel = str(p.relative_to(root))
-        if prefer and rel.split("/", 1)[0] == prefer:
+        if prefer and (rel + "/").startswith(prefer.rstrip("/") + "/"):
             score *= 3
         hits.append({"file": rel, "page": i + 1, "score": round(score, 2), "text": " ".join(t.split())[:1500]})
     hits.sort(key=lambda h: -h["score"])

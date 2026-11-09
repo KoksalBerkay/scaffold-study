@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  ChevronRight, Folder, FolderOpen, FolderPlus, MessageSquare, MoreHorizontal, Pencil, Plus, Trash2, FolderInput, FlaskConical, Terminal,
+  ChevronRight, Folder, FolderOpen, FolderPlus, MessageSquare, MoreHorizontal, Pencil, Plus, Trash2, FolderInput, FlaskConical, Terminal, GraduationCap,
 } from 'lucide-react'
 import { api } from '../api'
+import { Modal, useToast } from './ui'
 
 function useOutside(ref, onOut) {
   useEffect(() => {
@@ -45,11 +46,48 @@ function Menu({ items, onClose }) {
   )
 }
 
+/** Connect a course folder to its notes folder and its materials folder. */
+function CourseSettings({ folder, onClose, onSaved }) {
+  const toast = useToast()
+  const [opts, setOpts] = useState(null)
+  const [notes, setNotes] = useState(folder.notes_folder || '')
+  const [mats, setMats] = useState(folder.materials_folder || '')
+  useEffect(() => { api('/api/course-folders').then(setOpts).catch(() => setOpts({ notes: [], materials: [] })) }, [])
+  const save = async () => {
+    const fs = await api(`/api/chat-folders/${folder.id}/course`, { method: 'PATCH', body: { notes_folder: notes, materials_folder: mats } })
+    onSaved(fs); onClose()
+    toast({ kind: 'success', text: `${folder.name}: course folders saved.` })
+  }
+  return (
+    <Modal title={`Course settings · ${folder.name}`} onClose={onClose}
+      footer={<><button className="btn ghost" onClick={onClose}>Cancel</button><button className="btn primary" onClick={save} disabled={!opts}>Save</button></>}>
+      <p className="muted small">Chats in this folder belong to the course <b>{folder.name}</b>. They share its memory and its Notes agent.</p>
+      <label className="field">
+        <span>Notes folder</span>
+        <select value={notes} onChange={(e) => setNotes(e.target.value)}>
+          <option value="">Automatic (a notes folder named “{folder.name}”)</option>
+          {(opts?.notes || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <span className="muted small">Where this course's Notes agent writes.</span>
+      </label>
+      <label className="field">
+        <span>Materials folder</span>
+        <select value={mats} onChange={(e) => setMats(e.target.value)}>
+          <option value="">Automatic (matched by name)</option>
+          {(opts?.materials || []).map((d) => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <span className="muted small">Its past exams and slides come first when the tutor searches.</span>
+      </label>
+    </Modal>
+  )
+}
+
 export default function ChatSidebar({ chats, activeId, onOpen, onNewChat, onChanged }) {
   const [folders, setFolders] = useState([])
   const [editing, setEditing] = useState(null) // {type:'folder'|'chat'|'new', id}
   const [menu, setMenu] = useState(null) // {type, id}
   const [dragOver, setDragOver] = useState(null)
+  const [courseFor, setCourseFor] = useState(null)
 
   const loadFolders = async () => { try { setFolders(await api('/api/chat-folders')) } catch (e) { setFolders([]) } }
   useEffect(() => { loadFolders() }, [chats.length])
@@ -136,6 +174,7 @@ export default function ChatSidebar({ chats, activeId, onOpen, onNewChat, onChan
                   <Menu onClose={() => setMenu(null)} items={[
                     { label: 'New chat here', icon: Plus, onClick: () => onNewChat(f.id) },
                     { label: 'Rename', icon: Pencil, onClick: () => setEditing({ type: 'folder', id: f.id }) },
+                    { label: 'Course settings…', icon: GraduationCap, onClick: () => setCourseFor(f) },
                     { label: 'Delete folder (keeps chats)', icon: Trash2, danger: true, onClick: () => deleteFolder(f.id) },
                   ]} />
                 )}
@@ -151,6 +190,7 @@ export default function ChatSidebar({ chats, activeId, onOpen, onNewChat, onChan
           {chats.length === 0 && <p className="muted small pad">No chats yet. Start one from a plan task or paste an exam question.</p>}
         </div>
       </div>
+      {courseFor && <CourseSettings folder={courseFor} onClose={() => setCourseFor(null)} onSaved={setFolders} />}
     </>
   )
 }

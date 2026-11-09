@@ -476,15 +476,4 @@ async def direct_request(cid: str, text: str) -> dict:
     return card
 
 
-@router.patch("/api/chat-folders/{fid}/notes-folder")
-def set_notes_folder(fid: str, body: dict = Body(...)):
-    from .chat import load_folders, save_folders
-    folders = load_folders()
-    for f in folders:
-        if f["id"] == fid:
-            f["notes_folder"] = (body.get("notes_folder") or "").strip().strip("/")
-    save_folders(folders)
-    return folders
-
-
 __all__ = ["after_answer", "load_cards", "apply_section", "plan_changes"]
