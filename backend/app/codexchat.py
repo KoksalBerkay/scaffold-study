@@ -125,7 +125,7 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
 
     async def run(prompt_text: str, stage: str, imgs: list[str]):
         detail = "Codex is working"
-        async for kind, val in codexlink.run_turn(info, prompt_text, imgs, model, effort):
+        async for kind, val in codexlink.run_turn_any(info, prompt_text, imgs, model, effort):
             if kind == "tick":
                 yield {"type": "status", "stage": stage, "detail": detail, "elapsed": val, "heartbeat": True}
             elif kind == "event":

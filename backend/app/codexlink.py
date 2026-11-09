@@ -12,6 +12,7 @@ import os
 import re
 import shutil
 import sqlite3
+import time
 from pathlib import Path
 
 from .llm import LLMError, friendly_error
@@ -207,6 +208,90 @@ def context_usage(info: dict) -> dict | None:
     return None
 
 
+class WriterBusy(LLMError):
+    """The thread is open in another Codex process (the Codex app, VS Code), which holds its only write lock."""
+
+
+async def run_turn_any(info: dict, prompt: str, images: list[str], model: str | None, effort: str | None):
+    """Send a message into the thread, whoever holds it. Normally Scaffold runs the turn itself; if the chat is open
+    in the Codex app or VS Code (which then owns the thread), the message is handed to that app and Scaffold reads
+    the answer back from Codex's history."""
+    try:
+        async for ev in run_turn(info, prompt, images, model, effort):
+            yield ev
+        return
+    except WriterBusy:
+        pass
+    yield ("event", {"kind": "tool", "text": "This chat is open in the Codex app, so Scaffold handed the message to it"})
+    async for ev in run_turn_via_queue(info, prompt, images, model, effort):
+        yield ev
+
+
+async def run_turn_via_queue(info: dict, prompt: str, images: list[str], model: str | None, effort: str | None):
+    """Deliver the message with `codex queue` to the process that holds the thread, then follow the turn in the
+    history database until it finishes."""
+    ids = _history_ids(info)
+    sent = time.time()
+    args = ["codex", "queue", "--thread", info["id"], "--message", prompt]
+    if model:
+        args += ["-m", model]
+    if effort:
+        args += ["-c", f'model_reasoning_effort="{effort}"']
+    imgs = [p for p in images or [] if Path(p).exists()]
+    if imgs:
+        args += ["-i", *imgs]
+    proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    out, err = await asyncio.wait_for(proc.communicate(), 120)
+    if proc.returncode != 0:
+        raise LLMError("This chat is open in the Codex app and could not take the message. Close it there and try again. "
+                       + (err or out).decode(errors="replace")[-200:])
+    seen: set[str] = set()
+    turn_key = None
+    while time.time() - sent < TURN_TIMEOUT:
+        await asyncio.sleep(1)
+        yield ("tick", round(time.time() - sent))
+        con = _connect("thread_history")
+        if not con:
+            continue
+        with con:
+            q = ",".join("?" * len(ids))
+            if turn_key is None:
+                r = con.execute(f"select thread_id, turn_id from thread_turns where thread_id in ({q}) and started_at >= ? "
+                                "order by started_at desc limit 1", [*ids, int(sent) - 2]).fetchone()
+                if not r:
+                    continue
+                turn_key = (r["thread_id"], r["turn_id"])
+            items = con.execute("select item_id, item_type, item_json from thread_items where thread_id = ? and turn_id = ? "
+                                "order by rollout_ordinal", turn_key).fetchall()
+            turn = con.execute("select status, final_agent_item_id from thread_turns where thread_id = ? and turn_id = ?",
+                               turn_key).fetchone()
+        for it in items:
+            if it["item_id"] in seen:
+                continue
+            seen.add(it["item_id"])
+            try:
+                data = json.loads(it["item_json"])
+            except Exception:
+                continue
+            if it["item_type"] == "commandExecution":
+                yield ("event", {"kind": "tool", "text": f"Ran `{_short_cmd(data.get('command', ''))}`"})
+            elif it["item_type"] == "agentMessage" and data.get("phase") == "commentary":
+                yield ("event", {"kind": "commentary", "text": data.get("text", "")})
+            elif it["item_type"] == "contextCompaction":
+                yield ("event", {"kind": "compaction", "text": "Context compacted: Codex summarized the older part of this chat to make room"})
+        if turn and turn["status"] in ("completed", "failed", "interrupted"):
+            final = ""
+            if turn["final_agent_item_id"]:
+                for it in items:
+                    if it["item_id"] == turn["final_agent_item_id"]:
+                        final = _item_text(it["item_json"])
+            if not final:
+                raise LLMError(f"The Codex app {turn['status']} this turn without an answer.")
+            yield ("final", final.strip())
+            return
+    raise LLMError("The Codex app took longer than 45 minutes and Scaffold stopped waiting.")
+
+
 ACTIVITY = {
     "command_execution": lambda it: f"Ran `{_short_cmd(it.get('command', ''))}`",
     "file_change": lambda it: "Edited " + ", ".join(Path(c.get("path", "")).name for c in it.get("changes") or []) or "Edited a file",
@@ -313,6 +398,8 @@ async def run_turn(info: dict, prompt: str, images: list[str], model: str | None
     final = (messages[-1] if messages else "").strip()
     if not final:
         err = b"".join(err_chunks).decode(errors="replace")
+        if "active writer" in err or "active writer" in failure:
+            raise WriterBusy("This chat is open in another Codex window.")
         raise LLMError(friendly_error("codex", (failure or "") + "\n" + err[-4000:], model or "")
                        or f"Codex stopped without an answer (exit {code}).")
     yield ("final", final)
@@ -355,7 +442,11 @@ async def compact(tid: str, timeout: float = 600):
             except Exception:
                 continue
             if msg.get("error"):
-                raise LLMError("Codex could not compact: " + str(msg["error"].get("message") or msg["error"])[:300])
+                detail = str(msg["error"].get("message") or msg["error"])
+                if "active writer" in detail:
+                    raise LLMError("This chat is open in the Codex app (or VS Code), which is holding it. "
+                                   "Type /compact there, or close the chat there and try again.")
+                raise LLMError("Codex could not compact: " + detail[:300])
             if msg.get("id") == 1 and step == "init":
                 await send({"method": "initialized"})
                 await send({"id": 2, "method": "thread/resume", "params": {"threadId": tid, "excludeTurns": True}})
