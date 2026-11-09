@@ -331,6 +331,11 @@ async def _review(course: str, lesson: str, changes: list[dict]) -> dict:
     return parse_json(out) or {"verdict": "approve", "issues": []}
 
 
+def _shrunk(changes: list[dict]) -> list[dict]:
+    return [c for c in changes if c["new"] is not None and c["action"] == "rewrote" and c["old"]
+            and len(c["new"]) < 0.9 * len(c["old"])]
+
+
 def _around(text: str, heading: str) -> str:
     i = text.find(heading)
     if i < 0:
@@ -343,6 +348,18 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
     settings = load_settings()
     out = await _agent_turn(course, folder, message, images, context_files)
     changes, rules, summary = plan_changes(out, folder)
+    shrunk = _shrunk(changes)
+    if shrunk:
+        # a full rewrite that makes an existing note shorter probably dropped content: never save it as is
+        card.update(status="fixing")
+        _save_card(cid, card)
+        out = await _agent_turn(course, folder, "NOT SAVED: your full rewrite would make these notes shorter, so content would be lost: "
+                                + "; ".join(f"notes/{c['path']} ({len(c['old'])} → {len(c['new'])} characters)" for c in shrunk)
+                                + ". Keep every existing line. Use SECTION edits for what changed, and output your edits again.",
+                                [], [c["path"] for c in shrunk])
+        changes, rules2, summary2 = plan_changes(out, folder)
+        rules, summary = rules + rules2, summary2 or summary
+        changes = [c for c in changes if c not in _shrunk(changes)]  # still shrinking: drop it rather than lose text
     if changes and settings.get("review_notes", True):
         card.update(status="reviewing")
         _save_card(cid, card)

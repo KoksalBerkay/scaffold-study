@@ -762,7 +762,8 @@ a.btn { text-decoration: none; }
 .notes-card { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 9px 12px; background: var(--panel); display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
 .notes-card.done { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
 .notes-card.error { border-color: color-mix(in srgb, var(--bad) 45%, var(--border)); }
-.notes-card-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.notes-card-head { display: flex; align-items: center; gap: 7px; }
+.notes-summary { color: var(--text-2); font-size: 13px; margin-top: -2px; }
 .notes-card.done .notes-card-head > svg:first-child { color: var(--ok); }
 .notes-card-title { font-weight: 600; }
 .notes-card .push-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
@@ -829,3 +830,7 @@ a.btn { text-decoration: none; }
 [data-theme='light'] .composer { box-shadow: 0 6px 20px rgba(20,24,40,.07); }
 [data-theme='light'] .composer:focus-within { box-shadow: 0 0 0 3px var(--accent-soft), 0 6px 20px rgba(20,24,40,.07); }
 [data-theme='light'] .slash-menu { box-shadow: 0 12px 30px rgba(20,24,40,.12); }
+
+.source-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+.source-divider::before, .source-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
+.source-divider span { display: inline-flex; align-items: center; gap: 6px; }

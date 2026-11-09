@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
   FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen, Square,
@@ -229,10 +229,10 @@ function NotesCard({ card, chatId, onUpdate }) {
       <div className="notes-card-head">
         {busy ? <Loader2 size={14} className="spin" /> : <NotebookPen size={14} />}
         <span className="notes-card-title">{busy || (card.status === 'done' ? 'Notes updated' : card.status === 'nothing' ? 'No new notes needed' : 'Notes failed')}</span>
-        {!busy && card.summary && card.status !== 'nothing' && <span className="muted small">· {card.summary}</span>}
         {fixes > 0 && !busy && <span className="tiny muted">· reviewer fixed {fixes}</span>}
         {!busy && <button className="link small push-right" onClick={() => setOpen(!open)}><MessageSquareReply size={13} /> {card.status === 'nothing' ? 'Take notes anyway' : 'Correct'}</button>}
       </div>
+      {!busy && card.summary && card.status !== 'nothing' && <div className="notes-summary">{card.summary}</div>}
       {card.files?.length > 0 && (
         <div className="notes-files">
           {card.files.map((f) => (
@@ -641,8 +641,16 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           </div>
         )}
         {chat?.kind === 'planner' && messages.length <= 1 && <Pitch />}
-        {messages.map((m, i) => m.role === 'event' ? <CompactDivider key={i} text={m.content} /> : (
-          <div key={i} className={`msg ${m.role}`}>
+        {messages.map((m, i) => m.role === 'event' ? <CompactDivider key={i} text={m.content} /> : (<Fragment key={i}>
+          {chat?.codex && (() => {
+            // one divider where the conversation moves between the Codex app and Scaffold
+            const prev = messages.slice(0, i).reverse().find((x) => x.role !== 'event')
+            const here = m.source === 'codex' ? 'codex' : 'scaffold'
+            const before = prev ? (prev.source === 'codex' ? 'codex' : 'scaffold') : null
+            if (here === before || (!prev && here === 'codex')) return null
+            return <div className="source-divider"><span>{here === 'codex' ? <><Terminal size={12} /> In the Codex app</> : <><Sparkles size={12} /> Continued in Scaffold</>}</span></div>
+          })()}
+          <div className={`msg ${m.role}`}>
             {m.role === 'assistant' && <div className="avatar tutor"><Sparkles size={15} /></div>}
             <div className="bubble">
               {m.attachments?.length > 0 && (
@@ -655,7 +663,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
               {m.role === 'user' && m.steer && <div className="steer-tag tiny"><CornerDownRight size={11} /> Steered while answering</div>}
               {m.role === 'assistant' && m.compacted && <div className="steer-tag tiny"><Layers size={11} /> Context was compacted for this answer</div>}
               {m.content && <Markdown source={m.content} />}
-              {m.source === 'codex' && <div className="tiny muted src-tag">in the Codex app</div>}
+
               {m.role === 'assistant' && m.plan_link && (
                 <button className="btn primary small plan-link" onClick={() => { window.location.hash = '/plan'; window.dispatchEvent(new Event('scaffold:openplan')) }}>
                   <CalendarCheck size={14} /> Open my study plan
@@ -666,7 +674,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
               {m.role === 'assistant' && cards.filter((c) => c.msg_ts === m.ts).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
             </div>
           </div>
-        ))}
+        </Fragment>))}
         {cards.filter((c) => !messages.some((m) => m.ts === c.msg_ts)).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
         {busy && <Pending {...busy} kind={chat?.kind} codex={!!chat?.codex} />}
         {!busy && failed && (
