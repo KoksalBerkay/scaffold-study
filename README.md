@@ -48,7 +48,7 @@
 ```bash
 ./run.sh          # web version: open http://127.0.0.1:8765 in any browser
 ./run.sh --app    # desktop app: the same thing in its own native window
-./run.sh --demo   # the demo semester, in its own workspace-demo/ folder (add --app for the window)
+./run.sh --demo   # the demo semester, in its own workspace-demo/ folder on port 8766 (add --app for the window)
 ```
 
 On macOS you can also run `scripts/make-mac-app.sh` once to get a double-clickable **Scaffold.app** with its own icon.
@@ -75,7 +75,7 @@ cd frontend && npm run dev
 
 ## 🎬 Demo data
 
-No materials at hand? Run `./run.sh --demo`, then in the planner click **Load the demo semester**, or **Load demo notes** in Notes. You get 3 courses of synthetic past exams (`demo-materials/`), finished notes for each course, a pre-built study plan, and the Reviewer test reports. Nothing you already have is overwritten.
+No materials at hand? Run `./run.sh --demo` (add `--app` for the window). It opens a separate demo workspace (`workspace-demo/`, on port 8766) with 3 courses of synthetic past exams (`demo-materials/`), finished notes, demo chats, a pre-built study plan and the Reviewer test reports. Demo data is only loaded from the command line and only into that demo workspace: it never touches your own notes, chats or settings.
 
 ## 🧪 Does the Reviewer actually help?
 

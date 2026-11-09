@@ -156,7 +156,7 @@ def browse(path: str = ""):
     shortcuts = [{"name": n, "path": str(Path.home() / n)} for n in ("Desktop", "Documents", "Downloads")
                  if (Path.home() / n).is_dir()]
     demo = ROOT / "demo-materials"
-    if demo.is_dir():
+    if demo.is_dir() and WORKSPACE.name == "workspace-demo":
         shortcuts.insert(0, {"name": "Demo materials", "path": str(demo)})
     return {"path": str(p), "parent": str(p.parent) if p.parent != p else None, "dirs": dirs,
             "shortcuts": shortcuts}

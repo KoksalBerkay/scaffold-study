@@ -6,12 +6,12 @@
 #   add --demo to open the demo semester (its own workspace-demo/ folder, separate from your data)
 set -e
 cd "$(dirname "$0")"
-APP=0; BUILD=1
+APP=0; BUILD=1; DEMO=0
 for a in "$@"; do
   case "$a" in
     --app) APP=1 ;;
     --no-build) BUILD=0 ;;
-    --demo) export SCAFFOLD_WORKSPACE="$PWD/workspace-demo" ;;
+    --demo) DEMO=1 ;;
   esac
 done
 if [ ! -d backend/.venv ]; then
@@ -20,7 +20,15 @@ fi
 uv pip install -q -p backend/.venv/bin/python -r backend/requirements.txt
 if [ ! -d frontend/node_modules ]; then (cd frontend && npm install); fi
 if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then scripts/build-frontend.sh; fi
-[ -d demo-materials ] || backend/.venv/bin/python backend/make_demo_materials.py
+export SCAFFOLD_PORT="${SCAFFOLD_PORT:-8765}"
+if [ "$DEMO" = 1 ]; then
+  # the demo semester lives in its own workspace and port, so it never touches your notes or your running app
+  export SCAFFOLD_WORKSPACE="$PWD/workspace-demo" SCAFFOLD_PORT=8766
+  [ -d demo-materials ] || backend/.venv/bin/python backend/make_demo_materials.py
+  if [ ! -d workspace-demo/notes ] || [ -z "$(ls -A workspace-demo/notes 2>/dev/null)" ]; then
+    (cd backend && .venv/bin/python seed_demo.py)
+  fi
+fi
 cd backend
 if [ "$APP" = 1 ]; then
   echo "Opening the Scaffold app…"
@@ -36,5 +44,5 @@ if [ "$APP" = 1 ]; then
   done
   exec .venv/bin/Scaffold desktop.py
 fi
-echo "Scaffold running at http://127.0.0.1:8765"
-exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8765 --timeout-graceful-shutdown 2
+echo "Scaffold running at http://127.0.0.1:$SCAFFOLD_PORT"
+exec .venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port "$SCAFFOLD_PORT" --timeout-graceful-shutdown 2

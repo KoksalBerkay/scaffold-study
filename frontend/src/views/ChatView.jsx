@@ -135,11 +135,6 @@ function MaterialsBar({ settings, needFolder, busy, onChosen }) {
       onChosen(s2, label || `I chose my materials folder: ${r.path.split('/').pop()} (${n} course folder${n === 1 ? '' : 's'}).`)
     } catch (e) { toast({ kind: 'error', text: e.message }) }
   }
-  const useDemo = async () => {
-    const b = await api('/api/fs/browse')
-    const demo = b.shortcuts?.find((x) => x.name === 'Demo materials')
-    if (demo) choose(demo.path, 'I want to try it with the demo semester materials.')
-  }
   if (!needFolder) {
     return (
       <div className="materials-bar">
@@ -156,7 +151,6 @@ function MaterialsBar({ settings, needFolder, busy, onChosen }) {
         <div className="muted small">A folder with one subfolder per course: past exams, solutions, slides.</div>
       </div>
       <div className="row">
-        <button className="btn ghost small" onClick={useDemo} disabled={busy}>Try the demo semester</button>
         <button className="btn primary" onClick={() => setPick(true)} disabled={busy}><FolderOpen size={15} /> Choose folder</button>
       </div>
       {pick && <FolderPicker title="Choose your materials folder" onClose={() => setPick(false)} onPick={(p) => choose(p)} />}

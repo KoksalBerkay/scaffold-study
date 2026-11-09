@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import os
+
 import socket
 import sys
 import threading
@@ -17,7 +19,7 @@ import webview
 sys.path.insert(0, str(Path(__file__).parent))
 from app.config import WORKSPACE  # noqa: E402
 
-PORT = 8765
+PORT = int(os.environ.get("SCAFFOLD_PORT", "8765"))
 ICON = Path(__file__).resolve().parents[1] / "assets" / "icon-1024.png"
 
 

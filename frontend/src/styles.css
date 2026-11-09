@@ -373,10 +373,14 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 
 /* ============ Notes ============ */
 .notes { display: grid; grid-template-columns: 260px 1fr; height: 100%; }
-.notes-tree { border-right: 1px solid var(--border); padding: 14px 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; }
+.notes-tree { border-right: 1px solid var(--border); padding: 14px 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.notes-tree > .row { margin-bottom: 8px; }
 .search { display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg-2); color: var(--muted); }
 .search input { border: none; background: none; box-shadow: none; flex: 1; padding: 7px 0; }
-.tree-folder { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); padding: 4px 8px; }
+.tree-folder { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--muted); padding: 5px 8px; width: 100%; border: none; background: none; text-align: left; border-radius: 6px; }
+.tree-folder:hover { background: var(--hover); color: var(--text-2); }
+.tree-folder .chev { transition: transform .15s; }
+.tree-count { font-weight: 500; font-size: 11px; color: var(--muted); }
 .tree-item { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 8px 6px 22px; border: none; background: none; text-align: left; border-radius: 6px; color: var(--text-2); font-size: 13.5px; }
 .tree-item:hover { background: var(--hover); }
 .tree-item.on { background: var(--accent-soft); color: var(--accent); }
@@ -834,3 +838,9 @@ a.btn { text-decoration: none; }
 .source-divider { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
 .source-divider::before, .source-divider::after { content: ''; flex: 1; border-top: 1px solid var(--border); }
 .source-divider span { display: inline-flex; align-items: center; gap: 6px; }
+
+/* tables: wrap between words only (never split "Databases" into "Database s"); scroll sideways if truly too wide */
+.md table th, .md table td, .live-editor .lp-table th, .live-editor .lp-table td { overflow-wrap: normal; word-break: normal; hyphens: manual; }
+.md table th, .live-editor .lp-table th { white-space: nowrap; }
+.md table td, .live-editor .lp-table td { min-width: 4.5em; }
+.md table td:has(> .katex), .md table td code { white-space: nowrap; }
