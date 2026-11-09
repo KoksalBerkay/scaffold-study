@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
   FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen, Square,
@@ -199,6 +199,58 @@ function QueueList({ queue, onRemove, onSendNow, busy }) {
   )
 }
 
+/** One message. Memoized: typing in the box must not re-render (re-parse Markdown and math for) the whole chat. */
+const MessageItem = memo(function MessageItem({ m, cards, chatId, planner, divider, onCard }) {
+  return (
+    <>
+      {divider && <div className="source-divider"><span>{divider === 'codex' ? <><Terminal size={12} /> In the Codex app</> : <><Sparkles size={12} /> Continued in Scaffold</>}</span></div>}
+      <div className={`msg ${m.role}`}>
+        {m.role === 'assistant' && <div className="avatar tutor"><Sparkles size={15} /></div>}
+        <div className="bubble">
+          {m.attachments?.length > 0 && (
+            <div className="msg-atts">
+              {m.attachments.map((a) => a.kind === 'image'
+                ? <a key={a.id} href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name} /></a>
+                : <Attachment key={a.id} a={a} />)}
+            </div>
+          )}
+          {m.role === 'user' && m.steer && <div className="steer-tag tiny"><CornerDownRight size={11} /> Steered while answering</div>}
+          {m.role === 'assistant' && m.compacted && <div className="steer-tag tiny"><Layers size={11} /> Context was compacted for this answer</div>}
+          {m.content && <Markdown source={m.content} />}
+          {m.role === 'assistant' && m.plan_link && (
+            <button className="btn primary small plan-link" onClick={() => { window.location.hash = '/plan'; window.dispatchEvent(new Event('scaffold:openplan')) }}>
+              <CalendarCheck size={14} /> Open my study plan
+            </button>
+          )}
+          {m.role === 'assistant' && !planner && m.source !== 'codex' && <ReviewBadge review={m.review} />}
+          {m.role === 'assistant' && <HowMade m={m} />}
+          {cards.map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={onCard} />)}
+        </div>
+      </div>
+    </>
+  )
+})
+
+const NO_CARDS = []
+
+const MessageList = memo(function MessageList({ messages, cards, chatId, codex, planner, onCard }) {
+  // notes cards by message, and Codex/Scaffold dividers, computed once per change (not per keystroke)
+  const byTs = useMemo(() => {
+    const map = new Map()
+    for (const c of cards) map.set(c.msg_ts, [...(map.get(c.msg_ts) || []), c])
+    return map
+  }, [cards])
+  let prevSource = null
+  return messages.map((m, i) => {
+    if (m.role === 'event') return <CompactDivider key={i} text={m.content} />
+    const here = m.source === 'codex' ? 'codex' : 'scaffold'
+    const divider = codex && prevSource !== here && !(prevSource === null && here === 'codex') ? here : null
+    prevSource = here
+    return <MessageItem key={i} m={m} cards={(m.role === 'assistant' && byTs.get(m.ts)) || NO_CARDS} chatId={chatId}
+      planner={planner} divider={divider} onCard={onCard} />
+  })
+})
+
 const NOTE_STATUS = { working: 'Notes agent is writing your notes…', reviewing: 'Notes reviewer is checking the change…', fixing: 'Fixing what the notes reviewer found…' }
 
 /** What the course's Notes agent did after this answer, with a box to correct it. */
@@ -357,7 +409,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const [busy, setBusy] = useState(null) // { stage, elapsed, detail, rounds }
   const [queue, setQueue] = useState([])
   const [cards, setCards] = useState([])
-  const upsertCard = (c) => setCards((cs) => [...cs.filter((x) => x.id !== c.id), c])
+  const upsertCard = useCallback((c) => setCards((cs) => [...cs.filter((x) => x.id !== c.id), c]), [])
   const [ctx, setCtx] = useState(null)
   const [drag, setDrag] = useState(false)
   const [matPicker, setMatPicker] = useState(false)
@@ -640,40 +692,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
           </div>
         )}
         {chat?.kind === 'planner' && messages.length <= 1 && <Pitch />}
-        {messages.map((m, i) => m.role === 'event' ? <CompactDivider key={i} text={m.content} /> : (<Fragment key={i}>
-          {chat?.codex && (() => {
-            // one divider where the conversation moves between the Codex app and Scaffold
-            const prev = messages.slice(0, i).reverse().find((x) => x.role !== 'event')
-            const here = m.source === 'codex' ? 'codex' : 'scaffold'
-            const before = prev ? (prev.source === 'codex' ? 'codex' : 'scaffold') : null
-            if (here === before || (!prev && here === 'codex')) return null
-            return <div className="source-divider"><span>{here === 'codex' ? <><Terminal size={12} /> In the Codex app</> : <><Sparkles size={12} /> Continued in Scaffold</>}</span></div>
-          })()}
-          <div className={`msg ${m.role}`}>
-            {m.role === 'assistant' && <div className="avatar tutor"><Sparkles size={15} /></div>}
-            <div className="bubble">
-              {m.attachments?.length > 0 && (
-                <div className="msg-atts">
-                  {m.attachments.map((a) => a.kind === 'image'
-                    ? <a key={a.id} href={a.url} target="_blank" rel="noreferrer"><img src={a.url} alt={a.name} /></a>
-                    : <Attachment key={a.id} a={a} />)}
-                </div>
-              )}
-              {m.role === 'user' && m.steer && <div className="steer-tag tiny"><CornerDownRight size={11} /> Steered while answering</div>}
-              {m.role === 'assistant' && m.compacted && <div className="steer-tag tiny"><Layers size={11} /> Context was compacted for this answer</div>}
-              {m.content && <Markdown source={m.content} />}
-
-              {m.role === 'assistant' && m.plan_link && (
-                <button className="btn primary small plan-link" onClick={() => { window.location.hash = '/plan'; window.dispatchEvent(new Event('scaffold:openplan')) }}>
-                  <CalendarCheck size={14} /> Open my study plan
-                </button>
-              )}
-              {m.role === 'assistant' && chat?.kind !== 'planner' && m.source !== 'codex' && <ReviewBadge review={m.review} />}
-              {m.role === 'assistant' && <HowMade m={m} />}
-              {m.role === 'assistant' && cards.filter((c) => c.msg_ts === m.ts).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
-            </div>
-          </div>
-        </Fragment>))}
+        <MessageList messages={messages} cards={cards} chatId={chatId} codex={!!chat?.codex} planner={chat?.kind === 'planner'} onCard={upsertCard} />
         {cards.filter((c) => !messages.some((m) => m.ts === c.msg_ts)).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
         {busy && <Pending {...busy} kind={chat?.kind} codex={!!chat?.codex} />}
         {!busy && failed && (
