@@ -86,6 +86,8 @@ def R(name, student, draft, expect, prior=None, rounds=None, memory="", must_not
             return False, "reviewer reply unreadable: " + v.get("raw", "")
         if must_not and any(w in fixes for w in must_not):
             return False, f"asked for something forbidden: {fixes[:300]}"
+        if expect is None:  # only the must_not rule matters (e.g. never ask to shorten)
+            return True, fixes[:300] or "approved"
         if expect == "approve":
             return v.get("verdict") != "revise", fixes[:300] or "approved"
         types = {i.get("type") for i in v.get("issues") or []}
@@ -117,7 +119,7 @@ REVIEWER = [
       "approve"),
     R("an earlier request for notes does not make the reviewer ask for notes",
       "Now explain what the trace of a 2x2 matrix is. Keep it short.",
-      "The **trace** of a square matrix is the sum of its diagonal entries: for $\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}$ it is $a+d$. For a $2\\times2$ matrix it equals the sum of the two eigenvalues, so it is a quick check on eigenvalues you computed.\n\nNext: what is the trace of $\\begin{pmatrix}2&1\\\\1&3\\end{pmatrix}$?",
+      "The **trace** of a square matrix is the sum of its diagonal entries: for $\\begin{pmatrix}a&b\\\\c&d\\end{pmatrix}$ it is $a+d$. For a $2\\times2$ matrix it equals the sum of the two eigenvalues (the numbers $\\lambda$ for which some nonzero vector $\\mathbf v$ satisfies $A\\mathbf v=\\lambda\\mathbf v$), so it is a quick check on eigenvalues you computed.\n\nNext: what is the trace of $\\begin{pmatrix}2&1\\\\1&3\\end{pmatrix}$?",
       "approve",
       prior=[{"role": "user", "content": "Teach me step by step and after every answer append notes to notes.md."},
              {"role": "assistant", "content": "Okay, I will teach step by step."}],
@@ -146,13 +148,21 @@ REVIEWER = [
       "How long is it from my Linear Algebra exam on 26 January to my Databases exam on 3 February?",
       "There are **8 days** between 26 January and 3 February (5 days left in January, plus 3 in February).",
       "approve"),
+    R("a long but correct explanation is never sent back to be shortened",
+      "Can you explain what an eigenvector is? I have never seen it.",
+      "An **eigenvector** of a square matrix $A$ is a nonzero vector $\\mathbf v$ that $A$ does not turn: $A$ only stretches, shrinks or flips it. In symbols, $A\\mathbf v=\\lambda\\mathbf v$ for some number $\\lambda$, called the **eigenvalue** that belongs to $\\mathbf v$.\n\n"
+      "*Why this matters.* Most vectors change direction when you multiply them by a matrix. Eigenvectors are the special directions where the matrix acts like plain multiplication by a number, so along them the matrix is easy to understand.\n\n"
+      "*Example.* For $A=\\begin{pmatrix}2&0\\\\0&3\\end{pmatrix}$ and $\\mathbf v=\\begin{pmatrix}1\\\\0\\end{pmatrix}$: $A\\mathbf v=\\begin{pmatrix}2\\\\0\\end{pmatrix}=2\\mathbf v$. So $\\mathbf v$ is an eigenvector with eigenvalue $2$. The vector $\\begin{pmatrix}1\\\\1\\end{pmatrix}$ is not one: $A$ sends it to $\\begin{pmatrix}2\\\\3\\end{pmatrix}$, which points in a different direction.\n\n"
+      "*Why nonzero.* $A\\mathbf 0=\\lambda\\mathbf 0$ holds for every $\\lambda$, so allowing $\\mathbf 0$ would make every number an eigenvalue. That is why the definition excludes it.\n\n"
+      "Next: check whether $\\begin{pmatrix}0\\\\1\\end{pmatrix}$ is an eigenvector of the same $A$, and if so, with which eigenvalue.",
+      None, must_not=["shorter", "shorten", "trim", "concise", "remove", "cut ", "too long", "length"]),
     R("a subtle sign error is caught",
       "Can you check my determinant for [[3,-2],[4,1]]? I get 3*1 - (-2)*4 = 11.",
       "Almost: $\\det=3\\cdot1-(-2)\\cdot4=3-8=-5$. Watch the sign: subtracting a negative product.",
       {"correctness", "feedback"}),
     R("correct LaTeX-heavy teaching is not nitpicked for formatting",
       "Why is the projection of v onto a unit vector u equal to (v·u)u?",
-      "The **projection** of $\\mathbf v$ onto $\\mathbf u$ is the point on the line through $\\mathbf u$ closest to $\\mathbf v$. Every point on that line is a scalar multiple $c\\,\\mathbf u$. The closest point is where the leftover $\\mathbf v-c\\mathbf u$ meets the line at a right angle, and two vectors are perpendicular exactly when their dot product is $0$:\n$$\n(\\mathbf v-c\\mathbf u)\\cdot\\mathbf u=0\\;\\Longrightarrow\\;\\mathbf v\\cdot\\mathbf u-c\\,(\\mathbf u\\cdot\\mathbf u)=0.\n$$\nSince $\\mathbf u$ is a unit vector, $\\mathbf u\\cdot\\mathbf u=1$, so $c=\\mathbf v\\cdot\\mathbf u$ and the projection is $(\\mathbf v\\cdot\\mathbf u)\\mathbf u$.\n\nNext: compute it for $\\mathbf v=(1,0,1)$ and $\\mathbf u=\\tfrac{1}{\\sqrt2}(1,1,0)$.",
+      "The **projection** of $\\mathbf v$ onto $\\mathbf u$ is the point on the line through $\\mathbf u$ closest to $\\mathbf v$. Every point on that line is a scalar multiple $c\\,\\mathbf u$. The closest point is where the leftover $\\mathbf v-c\\mathbf u$ meets the line at a right angle: from any other point on the line, the leftover has an extra piece along the line, and by Pythagoras that makes it longer. Two vectors are perpendicular exactly when their dot product is $0$:\n$$\n(\\mathbf v-c\\mathbf u)\\cdot\\mathbf u=0\\;\\Longrightarrow\\;\\mathbf v\\cdot\\mathbf u-c\\,(\\mathbf u\\cdot\\mathbf u)=0.\n$$\nSince $\\mathbf u$ is a unit vector, $\\mathbf u\\cdot\\mathbf u=1$, so $c=\\mathbf v\\cdot\\mathbf u$ and the projection is $(\\mathbf v\\cdot\\mathbf u)\\mathbf u$.\n\nNext: compute it for $\\mathbf v=(1,0,1)$ and $\\mathbf u=\\tfrac{1}{\\sqrt2}(1,1,0)$.",
       "approve", must_not=["delimiter", "\\(", "format"]),
 ]
 
