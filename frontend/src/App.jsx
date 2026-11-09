@@ -78,6 +78,7 @@ function Shell() {
         if (ev.type === 'notes') toast({ kind: 'success', title: 'Notes updated', text: ev.paths.join(', '), timeout: 7000, action: { label: 'Open', onClick: () => go('notes', ev.paths[0]) } })
         if (ev.type === 'chats') loadChats()
         if (ev.type === 'turn') window.dispatchEvent(new CustomEvent('scaffold:turn', { detail: ev.chat }))
+        if (ev.type === 'notes_card') window.dispatchEvent(new CustomEvent('scaffold:notescard', { detail: ev }))
         if (ev.type === 'plan') { window.dispatchEvent(new Event('scaffold:plan')); toast({ kind: 'success', title: 'Study plan updated', text: 'Your schedule and time estimates are up to date.', timeout: 6000, action: { label: 'Open', onClick: () => go('plan') } }) }
         if (ev.type === 'bg_error') toast({ kind: 'error', title: ev.title || 'Background task failed', text: ev.message, timeout: 8000 })
       }

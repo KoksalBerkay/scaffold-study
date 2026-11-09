@@ -777,3 +777,27 @@ a.btn { text-decoration: none; }
 .codex-title { font-size: 13.5px; }
 .codex-thread select { max-width: 170px; }
 .rot90 { transform: rotate(90deg); transition: transform .15s; }
+
+/* ---- notes agent card ---- */
+.notes-card { margin-top: 10px; border: 1px solid var(--border); border-radius: 12px; padding: 9px 12px; background: var(--panel); display: flex; flex-direction: column; gap: 7px; font-size: 13px; }
+.notes-card.done { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); }
+.notes-card.error { border-color: color-mix(in srgb, var(--bad) 45%, var(--border)); }
+.notes-card-head { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.notes-card.done .notes-card-head > svg:first-child { color: var(--ok); }
+.notes-card-title { font-weight: 600; }
+.notes-card .push-right { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; }
+.notes-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.note-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 8px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); text-decoration: none; max-width: 100%; }
+.note-chip:hover { border-color: var(--accent); }
+.note-chip .tiny { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.notes-corrections { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; color: var(--text-2); }
+.notes-corrections li { display: flex; align-items: center; gap: 5px; }
+.notes-feedback { display: flex; gap: 6px; }
+.notes-feedback input { flex: 1; }
+
+/* ---- slash commands ---- */
+.composer-wrap { position: relative; }
+.slash-menu { max-width: 820px; margin: 0 auto 6px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--panel); box-shadow: var(--shadow); padding: 4px; display: flex; flex-direction: column; }
+.slash-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border: none; background: none; border-radius: 8px; text-align: left; color: var(--text); }
+.slash-item.on, .slash-item:hover { background: var(--accent-soft); }
+.slash-item .mono { color: var(--accent); }

@@ -13,17 +13,18 @@ WORKSPACE = Path(os.environ.get("SCAFFOLD_WORKSPACE", ROOT / "workspace")).resol
 DEFAULT_PROMPTS = Path(__file__).parent / "prompts"
 
 PROMPT_NAMES = [
-    "planner_chat", "planner", "plan_updater", "tutor", "reviewer", "notetaker",
+    "planner_chat", "planner", "plan_updater", "tutor", "reviewer", "notes_agent", "notes_reviewer",
     "memory_updater", "summary", "math",
 ]
 
-ROLES = ["planner", "tutor", "reviewer", "background"]
+ROLES = ["planner", "tutor", "reviewer", "notes", "background"]
 
 DEFAULT_SETTINGS = {
     "materials_path": "",
     "notes_path": "",  # empty = workspace/notes
     "plan_folder": "",  # inside the notes folder; empty = "Study Plan"
     "auto_notes": True,
+    "review_notes": True,  # the Notes reviewer checks every notes change before it is saved
     "review": True,
     "max_review_rounds": 2,
     "providers": {
@@ -34,6 +35,7 @@ DEFAULT_SETTINGS = {
         "planner": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
         "tutor": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
         "reviewer": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
+        "notes": {"provider": "codex", "model": "gpt-6-luna", "effort": "high"},
         "background": {"provider": "codex", "model": "gpt-6-luna", "effort": "medium"},
     },
 }

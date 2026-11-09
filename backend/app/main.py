@@ -268,7 +268,7 @@ def note_write(body: dict = Body(...)):
 
 
 # ---------------- chats (added in chat.py) ----------------
-from . import codexchat  # noqa: E402,F401  (registers the Codex link routes on the chat router)
+from . import codexchat, notesagent  # noqa: E402,F401  (they register their routes on the chat router)
 from .chat import router as chat_router  # noqa: E402
 app.include_router(chat_router)
 

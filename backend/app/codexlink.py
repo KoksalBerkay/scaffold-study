@@ -313,3 +313,57 @@ async def run_turn(info: dict, prompt: str, images: list[str], model: str | None
         raise LLMError(friendly_error("codex", (failure or "") + "\n" + err[-4000:], model or "")
                        or f"Codex stopped without an answer (exit {code}).")
     yield ("final", final)
+
+
+async def compact(tid: str, timeout: float = 600):
+    """Ask Codex to compact the thread now (its own /compact), through the app-server protocol.
+    Yields ("tick", seconds) while waiting; returns when Codex reports the thread was compacted."""
+    if not shutil.which("codex"):
+        raise LLMError("Codex CLI not found.")
+    proc = await asyncio.create_subprocess_exec("codex", "app-server", stdin=asyncio.subprocess.PIPE,
+                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL,
+                                                limit=64 * 1024 * 1024)
+
+    async def send(msg: dict):
+        proc.stdin.write((json.dumps(msg) + "\n").encode())
+        await proc.stdin.drain()
+
+    loop = asyncio.get_event_loop()
+    start = loop.time()
+    pending: asyncio.Task | None = None
+    try:
+        await send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "scaffold", "version": "1.0"}}})
+        step = "init"
+        while True:
+            if loop.time() - start > timeout:
+                raise LLMError("Codex did not finish compacting in time.")
+            if pending is None:
+                pending = asyncio.ensure_future(proc.stdout.readline())
+            done, _ = await asyncio.wait({pending}, timeout=1.0)
+            if not done:
+                yield ("tick", round(loop.time() - start))
+                continue
+            line = pending.result()
+            pending = None
+            if not line:
+                raise LLMError("Codex stopped before compacting.")
+            try:
+                msg = json.loads(line)
+            except Exception:
+                continue
+            if msg.get("error"):
+                raise LLMError("Codex could not compact: " + str(msg["error"].get("message") or msg["error"])[:300])
+            if msg.get("id") == 1 and step == "init":
+                await send({"method": "initialized"})
+                await send({"id": 2, "method": "thread/resume", "params": {"threadId": tid, "excludeTurns": True}})
+                step = "resume"
+            elif msg.get("id") == 2 and step == "resume":
+                await send({"id": 3, "method": "thread/compact/start", "params": {"threadId": tid}})
+                step = "compact"
+            elif step == "compact" and msg.get("method") in ("thread/compacted", "turn/completed"):
+                return
+    finally:
+        if pending is not None and not pending.done():
+            pending.cancel()
+        if proc.returncode is None:
+            proc.kill()

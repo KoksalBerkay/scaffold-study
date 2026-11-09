@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
   FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen, Square,
-  CornerDownRight, Clock3, Layers, Terminal,
+  CornerDownRight, Clock3, Layers, Terminal, NotebookPen, MessageSquareReply,
 } from 'lucide-react'
 import { api, follow, setBusy as markBusy, upload } from '../api'
 import Markdown from '../components/Markdown'
@@ -87,9 +87,10 @@ const PLANNER_STAGES = [
 ]
 
 function Pending({ stage, elapsed, detail, rounds, activity = [], reconnecting, kind, steering, codex }) {
-  const order = ['context', 'drafting', 'tool', 'reviewing', 'revising', 'building']
+  const order = ['context', 'drafting', 'tool', 'reviewing', 'revising', 'building', 'compacting']
   const idx = order.indexOf(stage)
-  const steps = codex
+  const steps = stage === 'compacting' ? [{ id: 'compacting', label: codex ? 'Codex is compacting this chat' : 'Summarizing the conversation' }]
+    : codex
     ? [{ id: 'drafting', label: kind === 'planner' ? 'Codex is working on your plan' : 'Codex is working in your chat' },
       ...(kind === 'planner' ? [] : [{ id: 'reviewing', label: 'Reviewer is checking' }])]
     : kind === 'planner' ? [...PLANNER_STAGES] : [...STAGES]
@@ -207,6 +208,83 @@ function QueueList({ queue, onRemove, onSendNow, busy }) {
   )
 }
 
+const NOTE_STATUS = { working: 'Notes agent is writing your notes…', reviewing: 'Notes reviewer is checking the change…', fixing: 'Fixing what the notes reviewer found…' }
+
+/** What the course's Notes agent did after this answer, with a box to correct it. */
+function NotesCard({ card, chatId, onUpdate }) {
+  const toast = useToast()
+  const [open, setOpen] = useState(false)
+  const [text, setText] = useState('')
+  const [sending, setSending] = useState(false)
+  const busy = NOTE_STATUS[card.status]
+  const fixes = card.review?.verdict === 'revise' ? card.review.issues?.length || 0 : 0
+  const send = async () => {
+    if (!text.trim()) return
+    setSending(true)
+    try {
+      const c = await api(`/api/chats/${chatId}/notes/${card.id}/feedback`, { method: 'POST', body: { text } })
+      onUpdate(c); setText(''); setOpen(false)
+    } catch (e) { toast({ kind: 'error', text: e.message }) }
+    setSending(false)
+  }
+  return (
+    <div className={`notes-card ${card.status}`}>
+      <div className="notes-card-head">
+        {busy ? <Loader2 size={14} className="spin" /> : <NotebookPen size={14} />}
+        <span className="notes-card-title">{busy || (card.status === 'done' ? 'Notes updated' : card.status === 'nothing' ? 'No new notes needed' : 'Notes failed')}</span>
+        {!busy && card.summary && card.status !== 'nothing' && <span className="muted small">· {card.summary}</span>}
+        {fixes > 0 && !busy && <span className="tiny muted">· reviewer fixed {fixes}</span>}
+        {!busy && <button className="link small push-right" onClick={() => setOpen(!open)}><MessageSquareReply size={13} /> {card.status === 'nothing' ? 'Take notes anyway' : 'Correct'}</button>}
+      </div>
+      {card.files?.length > 0 && (
+        <div className="notes-files">
+          {card.files.map((f) => (
+            <a key={f.path} className="note-chip" href={`#/notes/${encodeURIComponent(f.path)}`} title={f.path}>
+              <FileText size={12} /> {f.path.split('/').pop().replace(/\.md$/, '')}
+              <span className="tiny muted">{f.sections?.length ? f.sections.map((x) => x.heading).join(', ') : f.action}</span>
+            </a>
+          ))}
+        </div>
+      )}
+      {card.corrections?.length > 0 && (
+        <ul className="notes-corrections">{card.corrections.map((c, i) => <li key={i}><CornerDownRight size={11} /> {c.text}</li>)}</ul>
+      )}
+      {card.rules?.length > 0 && <div className="tiny muted">Saved for this course: {card.rules.join(' · ')}</div>}
+      {open && (
+        <div className="notes-feedback">
+          <input autoFocus value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') send() }}
+            placeholder={card.status === 'nothing' ? 'What should go in the notes?' : 'e.g. put the derivation before the example'} />
+          <button className="btn small primary" onClick={send} disabled={!text.trim() || sending}>{sending ? <Loader2 size={13} className="spin" /> : 'Send'}</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export const COMMANDS = [
+  { name: 'compact', hint: '', desc: 'Summarize this chat now, so answers stay fast and focused' },
+  { name: 'notes', hint: '<what to write>', desc: "Ask this course's Notes agent, e.g. /notes add a summary of eigenvalues" },
+  { name: 'review', hint: 'on | off', desc: 'Turn the Reviewer on or off' },
+  { name: 'stop', hint: '', desc: 'Stop the current answer' },
+]
+
+/** The menu that opens when the message starts with "/". */
+function SlashMenu({ text, onPick, active }) {
+  const q = text.slice(1).split(/\s/)[0].toLowerCase()
+  const items = COMMANDS.filter((c) => c.name.startsWith(q))
+  if (!items.length || /\s/.test(text.trim()) && COMMANDS.some((c) => c.name === q)) return null
+  return (
+    <div className="slash-menu" role="listbox">
+      {items.map((c, i) => (
+        <button key={c.name} className={`slash-item ${i === active ? 'on' : ''}`} onMouseDown={(e) => { e.preventDefault(); onPick(c) }}>
+          <span className="mono">/{c.name}</span>{c.hint && <span className="muted mono tiny">{c.hint}</span>}
+          <span className="muted small grow">{c.desc}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function HowMade({ m }) {
   const [open, setOpen] = useState(false)
   if (!m.activity?.length) return null
@@ -280,6 +358,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const [atts, setAtts] = useState([])
   const [busy, setBusy] = useState(null) // { stage, elapsed, detail, rounds }
   const [queue, setQueue] = useState([])
+  const [cards, setCards] = useState([])
+  const upsertCard = (c) => setCards((cs) => [...cs.filter((x) => x.id !== c.id), c])
   const [ctx, setCtx] = useState(null)
   const [drag, setDrag] = useState(false)
   const [matPicker, setMatPicker] = useState(false)
@@ -297,6 +377,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       setChat(c.meta)
       setMessages(c.messages)
       setQueue(c.queue || [])
+      setCards(c.notes || [])
       setCtx(c.context || null)
       setMissing(false)
       return c
@@ -321,6 +402,12 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       }
     })
   }, [chatId]) // eslint-disable-line
+
+  useEffect(() => {
+    const h = (e) => { if (e.detail.chat === chatId) upsertCard(e.detail.card) }
+    window.addEventListener('scaffold:notescard', h)
+    return () => window.removeEventListener('scaffold:notescard', h)
+  }, [chatId])
 
   // an answer started from another window (or the queue): follow it here too
   const tracking = useRef(false)
@@ -397,8 +484,22 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     taRef.current?.focus()
   }
 
+  const [slashActive, setSlashActive] = useState(0)
+  const runCommand = async (name, args) => {
+    setText('')
+    try {
+      const r = await api(`/api/chats/${chatId}/command`, { method: 'POST', body: { name, args } })
+      if (r.settings) setSettings(r.settings)
+      if (r.card) setCards((cs) => [...cs.filter((x) => x.id !== r.card.id), r.card])
+      if (r.message) toast({ text: r.message })
+      if (r.started) { setBusy({ stage: 'compacting', elapsed: 0, detail: 'Compacting', rounds: 0, activity: [] }); track() }
+    } catch (e) { toast({ kind: 'error', text: e.message }) }
+  }
+
   const send = async (t = text, a = atts, mode = 'queue') => {
     const body = (t || '').trim()
+    const cmd = body.match(/^\/(\w+)(?:\s+([\s\S]*))?$/)
+    if (cmd && COMMANDS.some((c) => c.name === cmd[1].toLowerCase()) && a.length === 0) return runCommand(cmd[1].toLowerCase(), cmd[2] || '')
     if ((!body && a.length === 0) || a.some((x) => x.uploading)) return
     if (busy) {
       // the AI is still answering: queue it (Enter) or steer the current answer (⌘/Ctrl+Enter)
@@ -563,9 +664,11 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
               )}
               {m.role === 'assistant' && chat?.kind !== 'planner' && m.source !== 'codex' && <ReviewBadge review={m.review} />}
               {m.role === 'assistant' && <HowMade m={m} />}
+              {m.role === 'assistant' && cards.filter((c) => c.msg_ts === m.ts).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
             </div>
           </div>
         ))}
+        {cards.filter((c) => !messages.some((m) => m.ts === c.msg_ts)).map((c) => <NotesCard key={c.id} card={c} chatId={chatId} onUpdate={upsertCard} />)}
         {busy && <Pending {...busy} kind={chat?.kind} codex={!!chat?.codex} />}
         {!busy && failed && (
           <div className="msg assistant">
@@ -586,6 +689,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             onChosen={async (s2, msg) => { setSettings(s2); send(msg, []) }} />
         )}
         <QueueList queue={queue} busy={!!busy} onRemove={unqueue} onSendNow={sendQueuedNow} />
+        {text.startsWith('/') && <SlashMenu text={text} active={slashActive} onPick={(c) => { if (c.hint) { setText(`/${c.name} `); taRef.current?.focus() } else runCommand(c.name, '') }} />}
         <div className="composer">
           {atts.length > 0 && <div className="atts">{atts.map((a) => <Attachment key={a.id} a={a} onRemove={() => setAtts((x) => x.filter((y) => y.id !== a.id))} />)}</div>}
           <textarea
@@ -593,9 +697,19 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             rows={1}
             value={text}
             placeholder={busy ? 'Add a message: Enter queues it, ⌘Enter steers the current answer' : chat?.kind === 'planner' ? (needFolder ? 'Choose your materials folder first, or just say hi' : 'Answer the planner, or tell it how your studying went…') : 'Ask, answer, or paste a screenshot. Math like x^2 is fine.'}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => { setText(e.target.value); setSlashActive(0) }}
             onPaste={onPaste}
             onKeyDown={(e) => {
+              const menu = text.startsWith('/') && !/\s/.test(text) ? COMMANDS.filter((c) => c.name.startsWith(text.slice(1).toLowerCase())) : []
+              if (menu.length && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault(); setSlashActive((i) => (i + (e.key === 'ArrowDown' ? 1 : menu.length - 1)) % menu.length); return
+              }
+              if (menu.length && (e.key === 'Tab' || (e.key === 'Enter' && text.slice(1).toLowerCase() !== menu[slashActive]?.name))) {
+                e.preventDefault()
+                const c = menu[Math.min(slashActive, menu.length - 1)]
+                if (c.hint || e.key === 'Tab') setText(`/${c.name} `); else runCommand(c.name, '')
+                return
+              }
               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault()
                 send(text, atts, busy && (e.metaKey || e.ctrlKey) ? 'steer' : 'queue')

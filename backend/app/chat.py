@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from . import llm, materials
 from .config import (WORKSPACE, course_memory_path, get_course_memory, get_memory, load_settings, materials_dir,
                      memory_path, notes_dir, read_json, render_prompt, write_atomic)
-from .files import normalize_math, notes_tree, note_target, parse_file_blocks, write_note
+from .files import normalize_math, notes_tree, note_target
 from .planner import plan_dir, plan_file, today_str, with_heartbeat
 
 router = APIRouter()
@@ -257,8 +257,9 @@ def get_chat(cid: str):
     from . import codexchat, jobs
     meta = load_meta(cid)
     msgs = codexchat.display_messages(cid, meta) if meta.get("codex") else load_messages(cid)
+    from .notesagent import load_cards
     return {"meta": meta, "messages": msgs, "summary": read_summary(cid), "queue": load_queue(cid),
-            "running": jobs.running(f"chat:{cid}"), "context": codexchat.context_of(meta)}
+            "running": jobs.running(f"chat:{cid}"), "context": codexchat.context_of(meta), "notes": load_cards(cid)}
 
 
 @router.patch("/api/chats/{cid}")
@@ -520,7 +521,15 @@ def history_for_model(cid: str, messages: list[dict], info: dict | None = None) 
     summary = read_summary(cid)
     msgs = messages
     prefix = []
-    if total > COMPACT_CHARS and summary:
+    try:
+        forced = (load_meta(cid).get("compact_ts") or 0) if (CHATS / cid / "meta.json").exists() else 0
+    except HTTPException:
+        forced = 0
+    if forced and summary and any((m.get("ts") or 0) < forced for m in messages):
+        msgs = [m for m in messages if (m.get("ts") or 0) >= forced]  # /compact: only what came after it
+        prefix = [{"role": "user", "content": f"(Summary of the earlier part of this chat)\n{summary}"},
+                  {"role": "assistant", "content": "Understood. Continuing from there."}]
+    elif total > COMPACT_CHARS and summary:
         msgs = messages[-KEEP_TURNS * 2:]
         prefix = [{"role": "user", "content": f"(Summary of the earlier part of this chat)\n{summary}"},
                   {"role": "assistant", "content": "Understood. Continuing from there."}]
@@ -545,15 +554,46 @@ def history_for_model(cid: str, messages: list[dict], info: dict | None = None) 
     return prefix + out
 
 
+_ESC = re.compile(r"\\\\|\\(?=[A-Za-z]{2,})|\\(?![\"\\/bfnrtu])")
+_LATEX_LIKE = re.compile(r"\\\\|\\(?=(?:[bfrt][A-Za-z])|[A-Za-z]{2,})|\\(?![\"\\/bfnrtu])")
+
+
+def _strings(o):
+    if isinstance(o, str):
+        yield o
+    elif isinstance(o, dict):
+        for v in o.values():
+            yield from _strings(v)
+    elif isinstance(o, list):
+        for v in o:
+            yield from _strings(v)
+
+
 def parse_json(text: str) -> dict | None:
-    m = re.search(r"\{.*\}", text, re.S)
+    """The first JSON object in a model reply. Models often put LaTeX in JSON strings without escaping the
+    backslashes, e.g. \\lambda or \\frac): repair those instead of failing or silently corrupting them."""
+    m = re.search(r"\{.*\}", text or "", re.S)
     if not m:
         return None
-    try:
-        data = json.loads(m.group(0))
-    except Exception:
-        return None
-    return data if isinstance(data, dict) else None
+    raw = m.group(0)
+
+    def load(src: str):
+        try:
+            data = json.loads(src)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def double(rx, src):
+        return rx.sub(lambda mm: mm.group(0) if mm.group(0) == "\\\\" else "\\\\", src)
+
+    data = load(raw)
+    # \f \b \t \r are valid JSON escapes, but "\frac", "\beta", "\theta", "\rho" are LaTeX: re-read if we see them
+    if data is not None and any(re.search(r"[\x08\x0c\t\r][A-Za-z]", t) for t in _strings(data)):
+        data = load(double(_LATEX_LIKE, raw)) or data
+    if data is None:
+        data = load(double(_ESC, raw))
+    return data
 
 
 # ---------------- the main loop ----------------
@@ -602,8 +642,15 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
             else:
                 yield ev
         if verdict is None:
-            yield act("review", "Reviewer's reply could not be read; keeping the draft")
-            verdict = {"verdict": "approve", "issues": [], "student_note": ""}
+            yield act("review", "Reviewer's reply could not be read; asking again")
+            again = await llm.complete("reviewer", rsys, [{"role": "user", "content": rin + "\n\nReply with valid JSON only. Escape every backslash in strings as \\\\."}])
+            verdict = parse_json(again)
+        if verdict is None:
+            yield act("issues", "Reviewer's reply could not be read twice: showing the draft unreviewed")
+            review["rounds"].append({"verdict": "unreadable", "issues": []})
+            review["final"] = "best_effort"
+            review["student_note"] = "The reviewer's check could not be read, so this answer is unreviewed."
+            return
         issues = [i for i in (verdict.get("issues") or []) if isinstance(i, dict)]
         review["rounds"].append({"verdict": verdict.get("verdict"), "issues": issues})
         if verdict.get("student_note"):
@@ -760,14 +807,14 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
 
 
 # ---------------- background agents ----------------
-_note_locks: dict[str, asyncio.Lock] = {}
 
 
 async def background(cid: str, user_msg: dict, asst: dict):
+    from . import notesagent
     settings = load_settings()
     jobs = [memory_job(cid, user_msg, asst, prev_tutor(cid)), summary_job(cid)]
     if settings.get("auto_notes"):
-        jobs.append(notes_job(cid, user_msg, asst))
+        jobs.append(notesagent.after_answer(cid, user_msg, asst))
     await asyncio.gather(*jobs, return_exceptions=True)
 
 
@@ -777,42 +824,6 @@ def prev_tutor(cid: str) -> str:
     msgs = display_messages(cid, meta) if meta.get("codex") else load_messages(cid)
     tutors = [m for m in msgs if m["role"] == "assistant"]
     return tutors[-2]["content"] if len(tutors) >= 2 else ""
-
-
-async def notes_job(cid: str, user_msg: dict, asst: dict):
-    lock = _note_locks.setdefault(cid, asyncio.Lock())
-    async with lock:
-        try:
-            meta = load_meta(cid)
-            tree = [n["path"] for n in notes_tree() if not n["path"].startswith(plan_dir() + "/")]
-            candidates = list(dict.fromkeys(meta.get("notes_touched") or []))[-3:]
-            existing = "\n\n".join(f"<<<FILE notes/{p}\n{note_target(p).read_text()}\nFILE>>>"
-                                   for p in candidates if note_target(p).exists())
-            root = materials_dir()
-            pinned = [_rel(root, l) for l in meta.get("pinned_files") or []]
-            user = (f"LATEST EXCHANGE:\nSTUDENT: {user_msg['model_content'][:6000]}\n\nTUTOR: {asst['content']}"
-                    + (f"\n\nSOURCE MATERIAL FOR THIS CHAT: {', '.join(p for p in pinned if p)}" if any(pinned) else "")
-                    + (f"\n\nCHAT TASK: {meta['task']}" if meta.get("task") else "")
-                    + "\n\nNOTES FOLDER TREE:\n" + ("\n".join(f"- notes/{t}" for t in tree) or "(empty)")
-                    + "\n\nNOTES YOU MAY UPDATE (current content):\n" + (existing or "(none yet; create new ones)"))
-            out = await llm.complete("background", render_prompt("notetaker"),
-                                     [{"role": "user", "content": user, "images": user_msg.get("image_paths") or []}])
-            written = []
-            for path, content in parse_file_blocks(out):
-                rel = path[len("notes/"):] if path.startswith("notes/") else path
-                if rel.startswith(plan_dir() + "/"):
-                    continue
-                write_note(rel, content)
-                written.append(rel if rel.endswith(".md") else rel + ".md")
-            if written:
-                meta = load_meta(cid)
-                meta["notes_touched"] = list(dict.fromkeys((meta.get("notes_touched") or []) + written))
-                save_meta(meta)
-                broadcast({"type": "notes", "paths": written, "chat": cid})
-        except ChatGone:
-            pass
-        except Exception as e:
-            broadcast({"type": "bg_error", "title": "Note-taker failed", "message": str(e)[:200]})
 
 
 async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
@@ -841,10 +852,10 @@ async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
         broadcast({"type": "bg_error", "title": "Memory update failed", "message": str(e)[:200]})
 
 
-async def summary_job(cid: str):
+async def summary_job(cid: str, force: bool = False):
     try:
-        msgs = load_messages(cid)
-        if sum(len(m["content"]) for m in msgs) < 6000:
+        msgs = [m for m in load_messages(cid) if m.get("role") in ("user", "assistant")]
+        if not force and sum(len(m["content"]) for m in msgs) < 6000:
             return
         prev = read_summary(cid)
         recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content']}" for m in msgs[-8:])
@@ -852,7 +863,8 @@ async def summary_job(cid: str):
         out = await llm.complete("background", render_prompt("summary"), [{"role": "user", "content": user}])
         (chat_dir(cid) / "summary.md").write_text(normalize_math(out))
     except Exception:
-        pass
+        if force:
+            raise
 
 
 def _remember_error(cid: str, message: str):
@@ -990,6 +1002,64 @@ async def stop_answer(cid: str):
     from . import jobs
     (chat_dir(cid) / "steer.json").unlink(missing_ok=True)
     return {"stopped": jobs.cancel(f"chat:{cid}")}
+
+
+async def compact_turn(cid: str):
+    """/compact: summarize the conversation now; later answers see the summary instead of the old messages."""
+    from . import codexlink
+    meta = load_meta(cid)
+    t0 = time.time()
+    if meta.get("codex"):
+        yield {"type": "status", "stage": "compacting", "detail": "Codex is compacting this chat"}
+        async for _, sec in codexlink.compact(meta["codex"]["thread"]):
+            yield {"type": "status", "stage": "compacting", "detail": "Codex is compacting this chat", "elapsed": sec, "heartbeat": True}
+        yield {"type": "compacted"}
+        return
+    msgs = [m for m in load_messages(cid) if m.get("role") in ("user", "assistant")]
+    if len(msgs) < 2:
+        raise llm.LLMError("Nothing to compact yet.")
+    yield {"type": "status", "stage": "compacting", "detail": "Summarizing the conversation"}
+    async for ev in with_heartbeat(summary_job(cid, force=True), "compacting", "Summarizing the conversation"):
+        if not isinstance(ev, tuple):
+            yield ev
+    meta = load_meta(cid)
+    meta["compact_ts"] = time.time()
+    meta["context"] = {**(meta.get("context") or {}), "used": 0, "window": COMPACT_CHARS, "unit": "chars", "compacted": True}
+    save_meta(meta)
+    append_message(cid, {"role": "event", "kind": "compaction", "ts": time.time(),
+                         "content": f"Context compacted with /compact: {len(msgs)} messages summarized ({round(time.time() - t0)}s)"})
+    yield {"type": "compacted"}
+
+
+@router.post("/api/chats/{cid}/command")
+async def run_command(cid: str, body: dict = Body(...)):
+    """Slash commands typed in the composer: /compact, /notes <request>, /review on|off, /stop."""
+    from . import jobs
+    load_meta(cid)
+    name = (body.get("name") or "").strip().lstrip("/").lower()
+    args = (body.get("args") or "").strip()
+    key = f"chat:{cid}"
+    if name == "stop":
+        return {"ok": jobs.cancel(key), "message": "Stopped." if jobs.running(key) else "Nothing was running."}
+    if name == "compact":
+        if jobs.running(key):
+            raise HTTPException(409, "Wait for the current answer to finish, then compact.")
+        jobs.start(key, lambda: compact_turn(cid), on_error=lambda m: None)
+        broadcast({"type": "turn", "chat": cid})
+        return {"ok": True, "started": True}
+    if name == "review":
+        from .config import save_settings
+        s = load_settings()
+        s["review"] = args.lower() not in ("off", "0", "false", "no") if args else not s.get("review")
+        save_settings(s)
+        return {"ok": True, "message": f"Reviewer is {'on' if s['review'] else 'off'}.", "settings": s}
+    if name == "notes":
+        if not args:
+            raise HTTPException(400, "Say what to put in the notes, e.g. /notes add a summary of today's proofs")
+        from . import notesagent
+        card = await notesagent.direct_request(cid, args)
+        return {"ok": True, "card": card}
+    raise HTTPException(400, f"Unknown command /{name}. Try /compact, /notes, /review or /stop.")
 
 
 @router.post("/api/chats/{cid}/retry")
