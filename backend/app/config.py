@@ -4,6 +4,7 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -130,16 +131,47 @@ DEFAULT_MEMORY = """## Teaching preferences
 ## Known mistakes to watch for
 """
 
+DEFAULT_COURSE_MEMORY = """## Teaching preferences for this course
 
-def get_memory() -> str:
+## Notes style for this course
+
+## Known mistakes to watch for
+"""
+
+
+def course_slug(course: str) -> str:
+    slug = re.sub(r"[^\w\- ]+", "", course or "").strip()
+    return slug[:80] or "course"
+
+
+def course_memory_path(course: str) -> Path:
+    return WORKSPACE / "memory" / f"{course_slug(course)}.md"
+
+
+def get_course_memory(course: str) -> str:
+    p = course_memory_path(course)
+    return p.read_text() if p.exists() else DEFAULT_COURSE_MEMORY
+
+
+def list_course_memories() -> list[str]:
+    d = WORKSPACE / "memory"
+    return sorted(p.stem for p in d.glob("*.md")) if d.exists() else []
+
+
+def get_memory(course: str | None = None) -> str:
+    """The general memory, plus the course's own memory when the chat belongs to a course."""
     p = memory_path()
-    return p.read_text() if p.exists() else DEFAULT_MEMORY
+    text = p.read_text() if p.exists() else DEFAULT_MEMORY
+    if course:
+        text = (f"# General (all courses)\n{text.strip()}\n\n"
+                f"# Only for {course}\n{get_course_memory(course).strip()}\n")
+    return text
 
 
-def render_prompt(name: str, **values: str) -> str:
+def render_prompt(name: str, course: str | None = None, **values: str) -> str:
     text = get_prompt(name)
     values.setdefault("math_rules", get_prompt("math"))
-    values.setdefault("memory", get_memory())
+    values.setdefault("memory", get_memory(course))
     for k, v in values.items():
         text = text.replace("{{" + k + "}}", v)
     return text

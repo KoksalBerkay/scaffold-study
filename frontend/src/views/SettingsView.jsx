@@ -169,21 +169,47 @@ function Prompts() {
 
 function Memory() {
   const toast = useToast()
+  const [courses, setCourses] = useState([])
+  const [scope, setScope] = useState('')
   const [content, setContent] = useState(null)
   const [orig, setOrig] = useState('')
-  useEffect(() => { api('/api/memory').then((r) => { setContent(r.content); setOrig(r.content) }) }, [])
-  if (content == null) return null
-  const save = async () => { await api('/api/memory', { method: 'PUT', body: { content } }); setOrig(content); toast({ kind: 'success', text: 'Memory saved.' }) }
+  useEffect(() => { api('/api/memory/courses').then(setCourses).catch(() => {}) }, [])
+  useEffect(() => {
+    setContent(null)
+    api(`/api/memory${scope ? `?course=${encodeURIComponent(scope)}` : ''}`).then((r) => { setContent(r.content); setOrig(r.content) })
+  }, [scope])
+  const dirty = content != null && content !== orig
+  const pick = (c) => { if (dirty && !window.confirm('Discard unsaved changes?')) return; setScope(c) }
+  const save = async () => {
+    await api('/api/memory', { method: 'PUT', body: { content, course: scope || null } })
+    setOrig(content)
+    setCourses((cs) => cs.map((c) => (c.name === scope ? { ...c, has_memory: true } : c)))
+    toast({ kind: 'success', text: scope ? `Memory for ${scope} saved.` : 'Memory saved.' })
+  }
   return (
-    <div className="card stack">
-      <div className="row between">
-        <div>
-          <h3>Your personal memory</h3>
-          <p className="muted small">Rules the Tutor and Reviewer follow for you only. It grows when you criticise the teaching ("you skipped why this works"). You can edit it any time.</p>
-        </div>
-        <button className="btn primary small" onClick={save} disabled={content === orig}><Save size={14} /> Save</button>
+    <div className="memory-layout">
+      <div className="prompt-list">
+        <button className={scope === '' ? 'on' : ''} onClick={() => pick('')}>All courses</button>
+        {courses.length > 0 && <div className="list-label">Courses</div>}
+        {courses.map((c) => (
+          <button key={c.name} className={scope === c.name ? 'on' : ''} onClick={() => pick(c.name)}>
+            {c.name}{c.has_memory && <span className="dot" title="Has its own rules" />}
+          </button>
+        ))}
       </div>
-      <textarea className="mono code-area" value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} />
+      <div className="card stack">
+        <div className="row between">
+          <div>
+            <h3>{scope ? `Memory for ${scope}` : 'Your personal memory'}</h3>
+            <p className="muted small">{scope
+              ? `Rules only for chats in the ${scope} folder: its notation, exam style, how its notes should look. They are added to your general memory.`
+              : 'Rules the Tutor and Reviewer follow for you in every course. It grows when you criticise the teaching ("you skipped why this works"). Each course folder can also have its own memory.'}</p>
+          </div>
+          <button className="btn primary small" onClick={save} disabled={!dirty}><Save size={14} /> Save</button>
+        </div>
+        {content == null ? <p className="muted">Loading…</p>
+          : <textarea className="mono code-area" value={content} onChange={(e) => setContent(e.target.value)} spellCheck={false} />}
+      </div>
     </div>
   )
 }

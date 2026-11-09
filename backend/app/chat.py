@@ -14,7 +14,8 @@ from fastapi import APIRouter, Body, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import llm, materials
-from .config import WORKSPACE, read_json, write_atomic, get_memory, load_settings, materials_dir, memory_path, notes_dir, render_prompt
+from .config import (WORKSPACE, course_memory_path, get_course_memory, get_memory, load_settings, materials_dir,
+                     memory_path, notes_dir, read_json, render_prompt, write_atomic)
 from .files import normalize_math, notes_tree, note_target, parse_file_blocks, write_note
 from .planner import PLAN_DIR, plan_file, today_str, with_heartbeat
 
@@ -136,6 +137,17 @@ def ensure_folder(name: str) -> str:
     f = {"id": uuid.uuid4().hex[:10], "name": name, "created": time.time()}
     save_folders(folders + [f])
     return f["id"]
+
+
+def chat_course(meta: dict) -> str | None:
+    """A chat's course is the name of the folder it is in (folders are courses)."""
+    fid = meta.get("folder")
+    if not fid:
+        return None
+    for f in load_folders():
+        if f["id"] == fid and not f["name"].startswith(TEST_FOLDER):
+            return f["name"]
+    return None
 
 
 def _harness_title(meta: dict) -> str:
@@ -570,7 +582,8 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
     if extra_images:
         user_msg = {**user_msg, "image_paths": (user_msg.get("image_paths") or []) + extra_images}
         images = (images or []) + extra_images
-    system = render_prompt("tutor") + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
+    course = chat_course(meta)
+    system = render_prompt("tutor", course=course) + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
     convo = history_for_model(cid, prior + [user_msg])
 
     # ---- draft, with up to 2 tool rounds
@@ -619,7 +632,7 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
     review = {"enabled": bool(settings.get("review")), "rounds": [], "student_note": ""}
     if settings.get("review"):
         recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}" for m in prior[-6:])
-        rsys = render_prompt("reviewer")
+        rsys = render_prompt("reviewer", course=course)
         max_rounds = int(settings.get("max_review_rounds", 2))
         for r in range(max_rounds + 1):
             yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
@@ -732,7 +745,11 @@ async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
     try:
         if not prev:
             return  # criticism refers to an earlier tutor message
-        user = (f"CURRENT MEMORY FILE:\n{get_memory()}\n\nLATEST EXCHANGE:\nTUTOR (previous message): {prev[:5000]}"
+        course = chat_course(load_meta(cid))
+        user = (f"GENERAL MEMORY FILE:\n{get_memory()}\n\n"
+                + (f"COURSE: {course}\nCOURSE MEMORY FILE:\n{get_course_memory(course)}\n\n" if course
+                   else "COURSE: (this chat is not in a course folder; use scope general)\n\n")
+                + f"LATEST EXCHANGE:\nTUTOR (previous message): {prev[:5000]}"
                 f"\n\nSTUDENT'S REPLY: {user_msg['content'][:3000]}")
         out = await llm.complete("background", render_prompt("memory_updater"), [{"role": "user", "content": user}])
         data = parse_json(out)
@@ -740,8 +757,12 @@ async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
             mem = data["memory"]
             if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", mem):
                 return  # backslash trap: refuse corrupted text
-            memory_path().write_text(mem.strip() + "\n")
-            broadcast({"type": "memory", "summary": data.get("change_summary") or "Memory updated", "chat": cid})
+            to_course = course and data.get("scope") == "course"
+            write_atomic(course_memory_path(course) if to_course else memory_path(), mem.strip() + "\n")
+            summary = data.get("change_summary") or "Memory updated"
+            broadcast({"type": "memory", "summary": f"{course}: {summary}" if to_course else summary, "chat": cid})
+    except ChatGone:
+        pass
     except Exception as e:
         broadcast({"type": "bg_error", "title": "Memory update failed", "message": str(e)[:200]})
 

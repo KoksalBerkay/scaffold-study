@@ -361,7 +361,8 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
 .role-test { grid-column: 1 / -1; font-size: 12.5px; padding: 6px 10px; border-radius: 6px; }
 .role-test.ok { background: var(--ok-soft); }
 .role-test.bad { background: var(--bad-soft); color: var(--bad); }
-.prompts { display: grid; grid-template-columns: 210px 1fr; gap: 14px; }
+.prompts, .memory-layout { display: grid; grid-template-columns: 210px 1fr; gap: 14px; }
+.prompt-list .list-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 12px 10px 4px; }
 .prompt-list { display: flex; flex-direction: column; gap: 2px; }
 .prompt-list button { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: none; background: none; text-align: left; border-radius: var(--radius-sm); color: var(--text-2); }
 .prompt-list button:hover { background: var(--hover); }
@@ -396,7 +397,7 @@ input[type='range'] { padding: 0; accent-color: var(--accent); background: none;
   .messages, .composer-wrap { padding-left: 14px; padding-right: 14px; }
   .notes-tree { display: none; }
   .note-page { padding: 12px 16px 0; }
-  .role-row, .prompts, .notes, .split-edit, .grid-2, .summary-box { grid-template-columns: 1fr; }
+  .role-row, .prompts, .memory-layout, .notes, .split-edit, .grid-2, .summary-box { grid-template-columns: 1fr; }
 }
 .plan .doc .md > h1:first-child { display: none; }
 .md li.task { padding: 7px 10px; }

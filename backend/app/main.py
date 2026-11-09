@@ -11,8 +11,9 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
 from . import llm, materials, planner
-from .config import (PROMPT_NAMES, ROOT, WORKSPACE, default_prompt, get_memory, get_prompt,
-                     load_settings, memory_path, notes_dir, prompt_path, save_settings)
+from .config import (PROMPT_NAMES, ROOT, WORKSPACE, course_memory_path, default_prompt, get_course_memory,
+                     get_memory, get_prompt, list_course_memories, load_settings, memory_path, notes_dir,
+                     prompt_path, save_settings, write_atomic)
 from .files import note_target, notes_tree
 
 app = FastAPI(title="Scaffold")
@@ -115,14 +116,26 @@ def reset_prompt(name: str):
 
 
 @app.get("/api/memory")
-def read_memory():
-    return {"content": get_memory()}
+def read_memory(course: str = ""):
+    """The general memory, or one course's memory (?course=Name)."""
+    return {"content": get_course_memory(course) if course else get_memory(), "course": course or None}
+
+
+@app.get("/api/memory/courses")
+def memory_courses():
+    """Courses that can have their own memory: every course folder in the sidebar, plus existing memory files."""
+    from .chat import TEST_FOLDER, load_folders
+    names = [f["name"] for f in load_folders() if not f["name"].startswith(TEST_FOLDER)]
+    for n in list_course_memories():
+        if n not in names:
+            names.append(n)
+    return [{"name": n, "has_memory": course_memory_path(n).exists()} for n in names]
 
 
 @app.put("/api/memory")
 def write_memory(body: dict = Body(...)):
-    memory_path().parent.mkdir(parents=True, exist_ok=True)
-    memory_path().write_text(body["content"])
+    course = (body.get("course") or "").strip()
+    write_atomic(course_memory_path(course) if course else memory_path(), body["content"])
     return {"ok": True}
 
 
