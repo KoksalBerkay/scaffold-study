@@ -1,13 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#8AA2FF"/>
-      <stop offset="1" stop-color="#4FD1A5"/>
+      <stop offset="0" stop-color="#6F86F5"/>
+      <stop offset="1" stop-color="#2FB98B"/>
     </linearGradient>
   </defs>
+  <!-- light glyph on a saturated background: stays visible when macOS darkens or tints icons in dark mode -->
   <rect x="100" y="100" width="824" height="824" rx="190" fill="url(#g)"/>
-  <polygon points="512,292 820,428 512,564 204,428" fill="#0E1015"/>
-  <path d="M330 500 L330 640 C330 712 694 712 694 640 L694 500 L512 580 Z" fill="#0E1015"/>
-  <rect x="768" y="446" width="24" height="176" rx="12" fill="#0E1015"/>
-  <circle cx="780" cy="640" r="30" fill="#0E1015"/>
+  <polygon points="512,292 820,428 512,564 204,428" fill="#FFFFFF"/>
+  <path d="M330 500 L330 640 C330 712 694 712 694 640 L694 500 L512 580 Z" fill="#FFFFFF"/>
+  <rect x="768" y="446" width="24" height="176" rx="12" fill="#FFFFFF"/>
+  <circle cx="780" cy="640" r="30" fill="#FFFFFF"/>
 </svg>

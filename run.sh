@@ -17,7 +17,11 @@ done
 if [ ! -d backend/.venv ]; then
   uv venv -p 3.12 backend/.venv
 fi
-uv pip install -q -p backend/.venv/bin/python -r backend/requirements.txt
+# install Python packages only when requirements.txt changed (keeps app start fast)
+REQ_HASH="$(shasum backend/requirements.txt | cut -d' ' -f1)"
+if [ "$(cat backend/.venv/.requirements-hash 2>/dev/null)" != "$REQ_HASH" ]; then
+  uv pip install -q -p backend/.venv/bin/python -r backend/requirements.txt && echo "$REQ_HASH" > backend/.venv/.requirements-hash
+fi
 if [ ! -d frontend/node_modules ]; then (cd frontend && npm install); fi
 if [ "$BUILD" = 1 ] || [ ! -d frontend/dist ]; then scripts/build-frontend.sh; fi
 export SCAFFOLD_PORT="${SCAFFOLD_PORT:-8765}"
