@@ -143,8 +143,13 @@ async def planchat_turn(cid: str, body: dict, retry: bool = False, **_):
 
     yield {"type": "status", "stage": "context", "detail": "Looking at your materials and your plan"}
     yield act("context", "Looking at your materials" + (" and your current plan" if planner.read_plan() else ""))
-    system = render_prompt("planner_chat", today=planner.today_str()) + "\n\n# What you can see\n" + _context()
+    from . import llm as _llm
+    usage: list = []
+    _llm.usage_var.set(usage)
+    # instructions and conversation first (cacheable), what the planner can see right now last
+    system = render_prompt("planner_chat", today=planner.today_str())
     history = chat.history_for_model(cid, (prior + [user_msg])[-30:])
+    history[-1] = {**history[-1], "content": history[-1]["content"] + "\n\n=== WHAT YOU CAN SEE RIGHT NOW (loaded by the app) ===\n" + _context()}
     out = None
     async for ev in planner.with_heartbeat(llm.complete("planner", system, history), "drafting", "The planner is thinking"):
         if isinstance(ev, tuple):
@@ -157,7 +162,8 @@ async def planchat_turn(cid: str, body: dict, retry: bool = False, **_):
         visible = ("Great, I'm building your plan now. It takes a few minutes: I read every exam question by question. "
                    "You can watch the progress below." if setup_m else
                    "Got it. I'm updating your plan now." if update_m else "Okay.")
-    asst = {"role": "assistant", "content": visible, "ts": time.time(), "activity": list(activity)}
+    asst = {"role": "assistant", "content": visible, "ts": time.time(), "activity": list(activity),
+            "usage": _llm.usage_summary(usage)}
     chat.append_message(cid, asst)
     yield {"type": "message", "message": asst}
 

@@ -424,7 +424,7 @@ TOOL_RE = re.compile(r"<<TOOL\s+(\w+)\s*(\{.*?\})?\s*>>", re.S)
 
 TOOL_PROTOCOL = """
 ## Tool calls
-The context below is already loaded. If you need something that is not there, reply with ONLY tool lines, nothing else, for example:
+The context attached to the student's latest message (materials, plan, notes, other chats) is already loaded. If you need something that is not there, reply with ONLY tool lines, nothing else, for example:
 <<TOOL read_material {"file": "Course/Exams/paper.pdf", "pages": "2-3"}>>
 <<TOOL view_page {"file": "Course/Exams/paper.pdf", "page": 2}>>
 Available tools:
@@ -658,6 +658,18 @@ REVISE_PROMPT = ("REVIEWER FEEDBACK. Fix every point and return the full revised
                  "Never reveal a result the student has not produced yet:\n")
 
 
+def review_input(user_msg: dict, prior: list[dict], material_used: str, draft: str, rounds: list[dict]) -> str:
+    """What the Reviewer sees (also used by the agent audit, so tests check exactly what the app sends)."""
+    recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}"
+                         for m in prior[-6:] if m.get("role") in ("user", "assistant"))
+    earlier = "\n".join(f"Round {i + 1}: " + "; ".join(f"[{x.get('type')}] {x.get('fix', '')}" for x in rd["issues"])
+                        for i, rd in enumerate(rounds) if rd.get("issues"))
+    return (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
+            f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}"
+            + (f"\n\nYOUR EARLIER FEEDBACK (this draft is a revision):\n{earlier}" if earlier else "")
+            + f"\n\nTUTOR'S DRAFT:\n{draft}")
+
+
 async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_used: str, images: list[str],
                       course: str | None, settings: dict, act, revise, review: dict):
     """Reviewer ⇄ author rounds. `revise(feedback, n)` yields events and finally ("result", new_draft).
@@ -665,19 +677,12 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
     if not settings.get("review"):
         yield act("approved", "Review is off: showing the draft")
         return
-    recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content'][:1500]}"
-                         for m in prior[-6:] if m.get("role") in ("user", "assistant"))
     rsys = render_prompt("reviewer", course=course)
     max_rounds = int(settings.get("max_review_rounds", 2))
     for r in range(max_rounds + 1):
         draft = normalize_math(draft)  # Scaffold fixes math delimiters itself: never spend a review round on them
         yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
-        earlier = "\n".join(f"Round {i + 1}: " + "; ".join(f"[{x.get('type')}] {x.get('fix', '')}" for x in rd["issues"])
-                            for i, rd in enumerate(review["rounds"]) if rd["issues"])
-        rin = (f"STUDENT'S LATEST MESSAGE:\n{user_msg.get('model_content') or user_msg.get('content')}\n\nRECENT CONVERSATION:\n{recent or '(start of chat)'}"
-               f"\n\nMATERIAL THE TUTOR USED:\n{material_used[:14000] or '(none)'}"
-               + (f"\n\nYOUR EARLIER FEEDBACK (this draft is a revision):\n{earlier}" if earlier else "")
-               + f"\n\nTUTOR'S DRAFT:\n{draft}")
+        rin = review_input(user_msg, prior, material_used, draft, review["rounds"])
         verdict = None
         async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
                                        "reviewing", "Correct? Complete? Not giving the answer away?"):
@@ -721,6 +726,8 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
 
 
 async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True, retry: bool = False):
+    usage: list = []
+    llm.usage_var.set(usage)
     meta = load_meta(cid)
     settings = load_settings()
     if review is not None:
@@ -770,9 +777,12 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
         user_msg = {**user_msg, "image_paths": (user_msg.get("image_paths") or []) + extra_images}
         images = (images or []) + extra_images
     course = chat_course(meta)
-    system = render_prompt("tutor", course=course) + "\n" + TOOL_PROTOCOL + "\n# Context\n" + context
+    # stable parts first (instructions, then the conversation), this message's context last: the provider can reuse
+    # the cached prefix on every turn instead of paying for the whole prompt again
+    system = render_prompt("tutor", course=course) + "\n" + TOOL_PROTOCOL
     cinfo: dict = {}
     convo = history_for_model(cid, prior + [user_msg], cinfo)
+    convo[-1] = {**convo[-1], "content": convo[-1]["content"] + "\n\n=== CONTEXT FOR THIS MESSAGE (loaded by the app) ===\n" + context}
     if cinfo.get("compacted"):
         yield act("compact", f"Context compacted: {cinfo['summarized']} older messages are replaced by the chat summary")
 
@@ -830,7 +840,9 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
                 yield ev
 
     review = {"enabled": bool(settings.get("review")), "rounds": [], "student_note": ""}
-    async for ev in review_loop(draft, user_msg, prior, material_used, images, course, settings, act, revise, review):
+    # the Reviewer must see every image the Tutor saw (a screenshot sent earlier in the chat, pages it looked up)
+    seen_images = list(dict.fromkeys(p for m in convo for p in (m.get("images") or [])))
+    async for ev in review_loop(draft, user_msg, prior, material_used, seen_images, course, settings, act, revise, review):
         if isinstance(ev, tuple):
             draft = ev[1]
         else:
@@ -838,7 +850,8 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
 
     final = normalize_math(draft)
     asst = {"role": "assistant", "content": final, "ts": time.time(), "review": review, "tools": tool_log,
-            "activity": activity, "seconds": round(time.time() - t0), "compacted": bool(cinfo.get("compacted"))}
+            "activity": activity, "seconds": round(time.time() - t0), "compacted": bool(cinfo.get("compacted")),
+            "usage": llm.usage_summary(usage)}
     append_message(cid, asst)
     meta = load_meta(cid)
     meta["context"] = {"used": cinfo.get("chars", 0) + len(final), "window": COMPACT_CHARS, "unit": "chars",
@@ -853,11 +866,31 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
 # ---------------- background agents ----------------
 
 
+FEEDBACK_CUES = re.compile(
+    r"\b(don'?t|do not|never|always|stop|instead|from now on|in general|prefer|i (like|love|hate|want|need)|"
+    r"you (skipped|forgot|didn'?t|did not|should|need to|keep|are|were)|why (didn'?t|did|do) you|too (long|short|fast|slow|much|many|detailed|vague)|"
+    r"confus|boring|lost (my )?attention|explain (it )?(better|more|again)|not (clear|linear|helpful)|terrible|worse|hate|annoying)\b", re.I)
+
+
+def worth_notes(asst: dict) -> bool:
+    """Skip the Notes agent only for clearly trivial answers ("Good, next step: …"); /notes always works."""
+    text = asst.get("content") or ""
+    return len(text) >= 450 or "$$" in text or "```" in text or "|---" in text
+
+
+def worth_memory(reply: str) -> bool:
+    """The memory updater only matters when the student gives feedback or states a preference."""
+    return bool(FEEDBACK_CUES.search(reply or "")) or len(reply or "") > 220
+
+
 async def background(cid: str, user_msg: dict, asst: dict):
     from . import notesagent
+    llm.usage_var.set(None)  # background work is logged, not added to the answer's count
     settings = load_settings()
-    jobs = [memory_job(cid, user_msg, asst, prev_tutor(cid)), summary_job(cid)]
-    if settings.get("auto_notes"):
+    jobs = [summary_job(cid)]
+    if worth_memory(user_msg.get("content", "")):
+        jobs.append(memory_job(cid, user_msg, asst, prev_tutor(cid)))
+    if settings.get("auto_notes") and worth_notes(asst):
         jobs.append(notesagent.after_answer(cid, user_msg, asst))
     await asyncio.gather(*jobs, return_exceptions=True)
 
@@ -870,16 +903,20 @@ def prev_tutor(cid: str) -> str:
     return tutors[-2]["content"] if len(tutors) >= 2 else ""
 
 
+def memory_input(course: str | None, prev: str, reply: str) -> str:
+    return (f"GENERAL MEMORY FILE:\n{get_memory()}\n\n"
+            + (f"COURSE: {course}\nCOURSE MEMORY FILE:\n{get_course_memory(course)}\n\n" if course
+               else "COURSE: (this chat is not in a course folder; use scope general)\n\n")
+            + f"LATEST EXCHANGE:\nTUTOR (previous message): {prev[:5000]}"
+            f"\n\nSTUDENT'S REPLY: {reply[:3000]}")
+
+
 async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
     try:
         if not prev:
             return  # criticism refers to an earlier tutor message
         course = chat_course(load_meta(cid))
-        user = (f"GENERAL MEMORY FILE:\n{get_memory()}\n\n"
-                + (f"COURSE: {course}\nCOURSE MEMORY FILE:\n{get_course_memory(course)}\n\n" if course
-                   else "COURSE: (this chat is not in a course folder; use scope general)\n\n")
-                + f"LATEST EXCHANGE:\nTUTOR (previous message): {prev[:5000]}"
-                f"\n\nSTUDENT'S REPLY: {user_msg['content'][:3000]}")
+        user = memory_input(course, prev, user_msg["content"])
         out = await llm.complete("background", render_prompt("memory_updater"), [{"role": "user", "content": user}])
         data = parse_json(out)
         if data and data.get("changed") and data.get("memory"):
@@ -901,6 +938,11 @@ async def summary_job(cid: str, force: bool = False):
         msgs = [m for m in load_messages(cid) if m.get("role") in ("user", "assistant")]
         if not force and sum(len(m["content"]) for m in msgs) < 6000:
             return
+        meta = load_meta(cid)
+        if not force and read_summary(cid) and len(msgs) - (meta.get("summary_upto") or 0) < 4:
+            return  # refreshed every 4 messages, not after every one
+        meta["summary_upto"] = len(msgs)
+        save_meta(meta)
         prev = read_summary(cid)
         recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content']}" for m in msgs[-8:])
         user = f"PREVIOUS SUMMARY:\n{prev or '(empty)'}\n\nMESSAGES SINCE THEN:\n{recent[:30000]}"

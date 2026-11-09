@@ -67,6 +67,8 @@ def _memory_block(meta: dict, course: str | None) -> tuple[str, str]:
 
 
 async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
+    usage: list = []
+    llm.usage_var.set(usage)
     meta = load_meta(cid)
     link = meta["codex"]
     info = codexlink.thread_info(link["thread"])
@@ -106,6 +108,8 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
         save_meta(meta)
     images = user_msg.get("image_paths") or []
     prior = [m for m in display_messages(cid, load_meta(cid)) if m is not user_msg and m.get("ts") != user_msg.get("ts")]
+    # the Reviewer also sees screenshots sent in the last few messages (Codex itself remembers them)
+    review_images = list(dict.fromkeys([p for m in prior[-6:] for p in (m.get("image_paths") or [])] + images))[-6:]
 
     header = PLANNER_HEADER.format(plan=plan_dir()) if planner else TUTOR_HEADER
     mem_block, mem_hash = ("", link.get("memory_hash")) if planner else _memory_block(meta, course)
@@ -152,7 +156,7 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
 
         material = "Codex worked directly in the student's files. What it did:\n" + "\n".join(
             a["text"] for a in activity if a["kind"] in ("tool", "compact"))
-        async for ev in review_loop(draft, user_msg, prior, material, images, course, settings, act, revise, review):
+        async for ev in review_loop(draft, user_msg, prior, material, review_images, course, settings, act, revise, review):
             if isinstance(ev, tuple):
                 draft = ev[1]
             else:
@@ -161,7 +165,8 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
     final = normalize_math(draft)
     asst = {"role": "assistant", "content": final, "ts": time.time(), "review": review if not planner else None,
             "activity": activity, "seconds": round(time.time() - t0), "via": "codex",
-            "compacted": any(a["kind"] == "compact" for a in activity), "plan_link": planner or None}
+            "compacted": any(a["kind"] == "compact" for a in activity), "plan_link": planner or None,
+            "usage": llm.usage_summary(usage)}
     append_message(cid, asst)
     yield {"type": "message", "message": asst}
     broadcast({"type": "chats"})

@@ -285,6 +285,11 @@ function HowMade({ m }) {
     <div className="howmade">
       <button className="link small" onClick={() => setOpen(!open)}>{open ? 'Hide' : 'How this answer was made'}{m.seconds ? ` · ${m.seconds}s` : ''}</button>
       {open && <ActivityList items={m.activity} />}
+      {open && m.usage?.calls > 0 && (
+        <div className="tiny muted usage-line" title="Tokens sent to and received from the model for this answer. Cached tokens were reused from earlier calls and cost much less.">
+          {m.usage.calls} model call{m.usage.calls > 1 ? 's' : ''} · {kfmt(m.usage.input)} tokens in ({kfmt(m.usage.cached)} cached) · {kfmt(m.usage.output)} out
+        </div>
+      )}
     </div>
   )
 }

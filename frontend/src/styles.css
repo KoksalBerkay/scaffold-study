@@ -844,3 +844,4 @@ a.btn { text-decoration: none; }
 .md table th, .live-editor .lp-table th { white-space: nowrap; }
 .md table td, .live-editor .lp-table td { min-width: 4.5em; }
 .md table td:has(> .katex), .md table td code { white-space: nowrap; }
+.usage-line { margin-top: 6px; }

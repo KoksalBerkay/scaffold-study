@@ -289,6 +289,9 @@ async def run_turn(info: dict, prompt: str, images: list[str], model: str | None
                 yield ("event", {"kind": "compaction", "text": "Context compacted: Codex summarized the older part of this chat to make room"})
             elif kind == "item.completed" and itype == "reasoning":
                 yield ("event", {"kind": "thinking", "text": "Thinking"})
+            elif kind == "turn.completed":
+                from .llm import _record_usage
+                _record_usage("codex-chat", model or info.get("model") or "", ev.get("usage"))
             elif kind in ("turn.failed", "error"):
                 failure = (ev.get("error") or {}).get("message") or ev.get("message") or json.dumps(ev)[:300]
             elif kind == "item.completed" and itype == "error":

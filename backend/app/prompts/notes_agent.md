@@ -115,6 +115,7 @@ Write the rule exactly as narrow as the student meant it. "Spell it Gram-Schmidt
 
 If you need to read a note you were not given:
 <<TOOL read_note {"path": "<path inside the notes folder>"}>>
+<<TOOL read_note {"path": "<path>", "heading": "### Exercise 7 (5 pts)"}>>   (one section of a long note)
 (reply with only tool lines; you then get the content and continue).
 
 End every reply with one line:

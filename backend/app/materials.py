@@ -188,7 +188,7 @@ def _norm_course(name: str) -> set[str]:
 
 
 def match_course(root: Path | None, course: str | None) -> str | None:
-    """The top-level materials folder that belongs to a course ("Analysis 2" ↔ "Mathematical Analysis II (10 cfu)")."""
+    """The top-level materials folder that belongs to a course ("Calculus 2" ↔ "Calculus II (6 credits)")."""
     if not root or not course:
         return None
     want = _norm_course(course)

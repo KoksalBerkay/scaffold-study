@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextvars
 import json
 import mimetypes
 import shutil
@@ -147,11 +148,7 @@ def _b64(path: str) -> tuple[str, str]:
 def _flatten(system: str, messages: list[dict]) -> str:
     """For CLI agents that take a single prompt."""
     parts = [
-        "You are being used as a plain text-generation backend inside a study app. "
-        "Do not run shell commands, do not read or write files, do not use any tools, do not browse. "
-        "When asked to output files, print them as text in your reply. "
-        "Everything you need is in this prompt and in the attached images. "
-        "Output only the requested text, with no preamble.",
+        "Everything you need is in this prompt and in the attached images. Output only the requested text, with no preamble.",
         "",
         "=== SYSTEM INSTRUCTIONS ===",
         system.strip(),
@@ -164,6 +161,17 @@ def _flatten(system: str, messages: list[dict]) -> str:
             who = "STUDENT" if m["role"] == "user" else "ASSISTANT"
             parts += [f"--- {who} ---", m["content"]]
         parts += ["", "=== Write the next ASSISTANT message now. ==="]
+    return "\n".join(parts)
+
+
+def _flatten_body(messages: list[dict]) -> str:
+    """The conversation alone (the instructions travel separately, as the worker thread's own instructions)."""
+    if len(messages) == 1 and messages[0]["role"] == "user":
+        return messages[0]["content"]
+    parts = ["=== CONVERSATION (oldest first) ==="]
+    for m in messages:
+        parts += [f"--- {'STUDENT' if m['role'] == 'user' else 'ASSISTANT'} ---", m["content"]]
+    parts += ["", "=== Write the next ASSISTANT message now. ==="]
     return "\n".join(parts)
 
 
@@ -207,13 +215,76 @@ def friendly_error(provider: str, raw: str, model: str = "") -> str:
     return detail or raw[-300:]
 
 
+# Scaffold's own agents only write text (they never run commands), so Codex's coding-agent instructions and tool
+# descriptions are dead weight on every call (~6,500 tokens). Linked Codex chats are not affected: they run with
+# the thread's full setup.
+CODEX_TEXT_ONLY_FEATURES = ["apps", "browser_use", "browser_use_external", "computer_use", "code_mode_host", "goals",
+                            "guardian_approval", "hooks", "image_generation", "multi_agent", "plugins", "skill_search",
+                            "sleep_tool", "tool_suggest", "shell_tool", "unified_exec", "mentions_v2", "in_app_browser",
+                            "realtime_conversation"]
+CODEX_BASE = ("You are the language model behind one agent of Scaffold, a study app. The instructions and the input are "
+              "in the user's message. Follow them exactly and reply with the requested text only. You cannot run "
+              "commands or edit files; when asked for files, print them in your reply in the requested format.")
+
+# token usage of the model calls made for the current answer (shown under it and logged)
+usage_var: contextvars.ContextVar[list | None] = contextvars.ContextVar("scaffold_usage", default=None)
+
+
+def _record_usage(role: str, model: str, usage: dict | None):
+    if not usage:
+        return
+    entry = {"role": role, "model": model, "input": usage.get("input_tokens", 0),
+             "cached": usage.get("cached_input_tokens", 0), "output": usage.get("output_tokens", 0)}
+    acc = usage_var.get()
+    if acc is not None:
+        acc.append(entry)
+    try:
+        (WORKSPACE / "logs").mkdir(parents=True, exist_ok=True)
+        import time as _t
+        with open(WORKSPACE / "logs" / "usage.jsonl", "a") as f:
+            f.write(json.dumps({**entry, "ts": round(_t.time())}) + "\n")
+    except OSError:
+        pass
+
+
+def usage_summary(entries: list[dict]) -> dict:
+    return {"input": sum(e["input"] for e in entries), "cached": sum(e["cached"] for e in entries),
+            "output": sum(e["output"] for e in entries), "calls": len(entries)}
+
+
 async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
     if not shutil.which("codex"):
         raise LLMError("Codex CLI not found. Install it and run `codex login`.")
+    # a fixed, empty working folder: Codex puts its path near the top of the prompt, and a new random folder per call
+    # would make every call look new to the provider's prompt cache
+    run_dir = WORKSPACE / "cache" / "codex-run"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    base = run_dir.parent / "codex-base.md"
+    if not base.exists() or base.read_text() != CODEX_BASE:
+        base.write_text(CODEX_BASE)
+    if cfg.get("model") and load_settings().get("codex_pool", True):
+        from .codexpool import POOL, PoolError
+        try:
+            text, usage = await POOL.run(model=cfg["model"], effort=cfg.get("effort") or None, base=CODEX_BASE,
+                                         instructions=system, text=_flatten_body(messages), images=_all_images(messages),
+                                         run_dir=run_dir, features_off=CODEX_TEXT_ONLY_FEATURES,
+                                         role=cfg.get("_role", ""), timeout=TIMEOUT)
+            if usage:
+                _record_usage(cfg.get("_role", ""), cfg["model"], {"input_tokens": usage.get("inputTokens", 0),
+                              "cached_input_tokens": usage.get("cachedInputTokens", 0),
+                              "output_tokens": usage.get("outputTokens", 0)})
+            return text
+        except (PoolError, asyncio.TimeoutError, KeyError, OSError) as e:
+            # the pool is an optimisation only: fall back to a plain one-off call
+            (WORKSPACE / "logs").mkdir(parents=True, exist_ok=True)
+            with open(WORKSPACE / "logs" / "codex-pool.log", "a") as f:
+                f.write(f"{cfg.get('_role')}: fell back to codex exec: {e}\n")
     with tempfile.TemporaryDirectory(prefix="scaffold-codex-") as tmp:
         out_file = Path(tmp) / "last.txt"
-        args = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config",
-                "-s", "read-only", "-C", tmp]
+        args = ["codex", "exec", "--skip-git-repo-check", "--ephemeral", "--ignore-user-config", "--json",
+                "-s", "read-only", "-C", str(run_dir), "-c", f'model_instructions_file="{base}"']
+        for f in CODEX_TEXT_ONLY_FEATURES:
+            args += ["-c", f"features.{f}=false"]
         if cfg.get("model"):
             args += ["-m", cfg["model"]]
         if cfg.get("effort"):
@@ -222,7 +293,13 @@ async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
         if imgs:
             args += ["-i", *imgs]
         args += ["-o", str(out_file)]  # a flag after -i ends the image list; prompt comes on stdin
-        code, out, err = await _run(args, _flatten(system, messages), cwd=tmp)
+        code, out, err = await _run(args, _flatten(system, messages), cwd=str(run_dir))
+        for line in out.splitlines():
+            if '"turn.completed"' in line:
+                try:
+                    _record_usage(cfg.get("_role", ""), cfg.get("model", ""), json.loads(line).get("usage"))
+                except Exception:
+                    pass
         text = out_file.read_text() if out_file.exists() else ""
         if code == 0 and not text.strip():
             return ""
@@ -262,6 +339,11 @@ async def _claude_code(cfg: dict, system: str, messages: list[dict]) -> str:
             if ev.get("is_error"):
                 raise LLMError("Claude Code: " + str(ev.get("result") or ev))
             result = ev.get("result")
+            u = ev.get("usage") or {}
+            cached = u.get("cache_read_input_tokens", 0)
+            _record_usage(cfg.get("_role", ""), cfg.get("model", ""),
+                          {"input_tokens": u.get("input_tokens", 0) + cached + u.get("cache_creation_input_tokens", 0),
+                           "cached_input_tokens": cached, "output_tokens": u.get("output_tokens", 0)})
     if result is None and code != 0:
         raise LLMError("Claude Code failed: " + (err or out)[-400:])
     return result or ""
@@ -294,7 +376,12 @@ async def _openai(cfg: dict, system: str, messages: list[dict]) -> str:
                              headers={"Authorization": f"Bearer {key}"}, json=body)
     if r.status_code != 200:
         raise LLMError(f"OpenAI error {r.status_code}: {r.text[:300]}")
-    return r.json()["choices"][0]["message"]["content"] or ""
+    data = r.json()
+    u = data.get("usage") or {}
+    _record_usage(cfg.get("_role", ""), body["model"], {"input_tokens": u.get("prompt_tokens", 0),
+                  "cached_input_tokens": (u.get("prompt_tokens_details") or {}).get("cached_tokens", 0),
+                  "output_tokens": u.get("completion_tokens", 0)})
+    return data["choices"][0]["message"]["content"] or ""
 
 
 async def _anthropic(cfg: dict, system: str, messages: list[dict]) -> str:
@@ -311,14 +398,20 @@ async def _anthropic(cfg: dict, system: str, messages: list[dict]) -> str:
                     parts.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
         parts.append({"type": "text", "text": m["content"] or "(empty)"})
         msgs.append({"role": m["role"], "content": parts})
+    # cache the system prompt (it repeats on every call of the same agent)
     body = {"model": cfg.get("model") or "claude-sonnet-5-5", "max_tokens": 16000,
-            "system": system, "messages": msgs}
+            "system": [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}], "messages": msgs}
     async with httpx.AsyncClient(timeout=TIMEOUT) as c:
         r = await c.post("https://api.anthropic.com/v1/messages", json=body, headers={
             "x-api-key": key, "anthropic-version": "2023-06-01"})
     if r.status_code != 200:
         raise LLMError(f"Anthropic error {r.status_code}: {r.text[:300]}")
-    return "".join(b.get("text", "") for b in r.json()["content"] if b["type"] == "text")
+    data = r.json()
+    u = data.get("usage") or {}
+    cached = u.get("cache_read_input_tokens", 0)
+    _record_usage(cfg.get("_role", ""), body["model"], {"input_tokens": u.get("input_tokens", 0) + cached + u.get("cache_creation_input_tokens", 0),
+                  "cached_input_tokens": cached, "output_tokens": u.get("output_tokens", 0)})
+    return "".join(b.get("text", "") for b in data["content"] if b["type"] == "text")
 
 
 _IMPL = {"codex": _codex, "claude_code": _claude_code, "openai": _openai, "anthropic": _anthropic}
@@ -330,7 +423,8 @@ class EmptyReply(LLMError):
 
 async def complete(role: str, system: str, messages: list[dict]) -> str:
     """One model call. Empty or failed replies are retried automatically (up to 2 more tries)."""
-    cfg = load_settings()["roles"].get(role) or load_settings()["roles"]["tutor"]
+    cfg = dict(load_settings()["roles"].get(role) or load_settings()["roles"]["tutor"])
+    cfg["_role"] = role
     impl = _IMPL.get(cfg.get("provider"))
     if not impl:
         raise LLMError(f"Unknown provider: {cfg.get('provider')}")

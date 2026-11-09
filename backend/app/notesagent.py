@@ -26,7 +26,8 @@ from .planner import plan_dir
 
 GENERAL = "General"
 HISTORY_KEEP = 10            # messages of the agent's own conversation sent each time (the rest is summarized)
-MAX_FILE_CHARS = 30_000      # per note given in full
+MAX_FILE_CHARS = 12_000      # notes up to this size are given in full; longer ones as outline + relevant sections
+SECTION_BUDGET = 10_000      # characters of relevant sections given from a long note
 SECTION_RE = re.compile(r"<<<SECTION\s+(.+?)\s*\n(.*?)(?:\nSECTION>>>|(?=\n<<<(?:SECTION|FILE|RULE))|\Z)", re.S)
 FILE_RE = re.compile(r"<<<FILE\s+(.+?)\s*\n(.*?)(?:\nFILE>>>|(?=\n<<<(?:SECTION|FILE|RULE))|\Z)", re.S)
 RULE_RE = re.compile(r"<<<RULE\s+(.*?)\s*RULE>>>", re.S)
@@ -94,6 +95,13 @@ def _append_history(course: str, *msgs: dict):
     with open(p, "a") as f:
         for m in msgs:
             f.write(json.dumps({**m, "ts": time.time()}) + "\n")
+
+
+def _condense(message: str) -> str:
+    """Student feedback is kept in full (it is what the agent must remember); lessons are kept short."""
+    if message.startswith(("STUDENT FEEDBACK", "STUDENT REQUEST", "NOTES REVIEWER", "NOT SAVED")):
+        return message[:2000]
+    return message[:900] + (" …" if len(message) > 900 else "")
 
 
 def _summary_path(course: str) -> Path:
@@ -275,7 +283,7 @@ async def _agent_turn(course: str, folder: str, message: str, images: list[str],
     known = _folder_files(folder)
     ctx = [f"COURSE: {course}", f"COURSE NOTES FOLDER: notes/{folder}" if folder else "COURSE NOTES FOLDER: notes/ (no course)",
            "FILES IN THIS FOLDER:\n" + ("\n".join(f"- notes/{p}" for p in known[:200]) or "(none yet)")]
-    budget = 60_000
+    budget = 36_000
     for rel in dict.fromkeys(files_for_context):
         try:
             p = note_target(rel)
@@ -285,8 +293,7 @@ async def _agent_turn(course: str, folder: str, message: str, images: list[str],
             continue
         body = p.read_text()
         if len(body) > MAX_FILE_CHARS:
-            heads = "\n".join(l for l in body.split("\n") if _heading_level(l))
-            body = f"(long note: its headings are below; read it with read_note if you need a section's text)\n{heads}"
+            body = _outline_and_relevant(body, message)
         if budget - len(body) < 0:
             break
         budget -= len(body)
@@ -304,12 +311,17 @@ async def _agent_turn(course: str, folder: str, message: str, images: list[str],
         for name, raw in calls[:4]:
             try:
                 args = json.loads(raw) if raw else {}
-                res = note_target(args["path"].removeprefix("notes/")).read_text()[:40000] if name == "read_note" else "Unknown tool"
+                res = _read_note_tool(args) if name == "read_note" else "Unknown tool"
             except Exception as e:
                 res = f"Tool error: {e}"
             results.append(f"### {name} {raw}\n{res}")
         convo = convo + [{"role": "assistant", "content": out}, {"role": "user", "content": "TOOL RESULTS:\n" + "\n\n".join(results)}]
-    _append_history(course, {"role": "user", "content": message}, {"role": "assistant", "content": out})
+    # remember the gist, not the full texts (they would be re-sent on every later turn)
+    _, rules, summary = plan_changes(out, folder) if out else ([], [], "")
+    edited = sorted({p for p, _ in SECTION_RE.findall(out)} | {p for p, _ in FILE_RE.findall(out)})
+    gist = (f"SUMMARY: {summary or 'nothing to add'}" + (f"\nEdited: {', '.join(edited)}" if edited else "")
+            + "".join(f"\nRULE: {r}" for r in rules))
+    _append_history(course, {"role": "user", "content": _condense(message)}, {"role": "assistant", "content": gist})
     return out
 
 
@@ -334,6 +346,59 @@ async def _review(course: str, lesson: str, changes: list[dict]) -> dict:
 def _shrunk(changes: list[dict]) -> list[dict]:
     return [c for c in changes if c["new"] is not None and c["action"] == "rewrote" and c["old"]
             and len(c["new"]) < 0.9 * len(c["old"])]
+
+
+def _read_note_tool(args: dict) -> str:
+    text = note_target(args["path"].removeprefix("notes/")).read_text()
+    want = (args.get("heading") or "").strip().lstrip("#").strip().lower()
+    if want:
+        for h, sec in _sections(text):
+            if h.lstrip("#").strip().lower() == want:
+                return sec
+        return f"No heading '{args.get('heading')}' in that note. Its outline:\n" + "\n".join(h for h, _ in _sections(text))
+    if len(text) > 40_000:
+        return (text[:40_000] + "\n\n(the note continues; ask for one section with {\"path\": ..., \"heading\": ...})")
+    return text
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    """(heading line, full section text) for every heading, outside code blocks."""
+    lines = text.split("\n")
+    heads, in_code = [], False
+    for i, l in enumerate(lines):
+        if l.strip().startswith("```"):
+            in_code = not in_code
+        if not in_code and _heading_level(l):
+            heads.append(i)
+    out = []
+    for k, i in enumerate(heads):
+        lvl = _heading_level(lines[i])
+        end = next((j for j in heads[k + 1:] if _heading_level(lines[j]) <= lvl), len(lines))
+        out.append((lines[i], "\n".join(lines[i:end])))
+    return out
+
+
+def _outline_and_relevant(body: str, message: str) -> str:
+    """A long note as its outline plus the few sections that share the most words with this lesson.
+    The agent can still read any section in full with read_note."""
+    words = {w for w in re.findall(r"[a-zA-Z]{4,}", message.lower())}
+    outline = "\n".join(h for h, _ in _sections(body))
+    scored = []
+    for h, sec in _sections(body):
+        if _heading_level(h) <= 1 or len(sec) > SECTION_BUDGET:
+            continue
+        score = len(words & set(re.findall(r"[a-zA-Z]{4,}", sec.lower())))
+        if score:
+            scored.append((score, h, sec))
+    picked, used = [], 0
+    for score, h, sec in sorted(scored, key=lambda x: -x[0]):
+        if used + len(sec) > SECTION_BUDGET or any(sec in p for p in picked):
+            continue
+        picked.append(sec)
+        used += len(sec)
+    return (f"(long note, {len(body)} characters: here is its outline and the sections most related to this lesson. "
+            f"Use SECTION edits; read_note gives you the full text if you need it.)\nOUTLINE:\n{outline}\n\n"
+            + "\n\n".join(picked))
 
 
 def _around(text: str, heading: str) -> str:
