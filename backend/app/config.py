@@ -22,6 +22,7 @@ ROLES = ["planner", "tutor", "reviewer", "background"]
 DEFAULT_SETTINGS = {
     "materials_path": "",
     "notes_path": "",  # empty = workspace/notes
+    "plan_folder": "",  # inside the notes folder; empty = "Study Plan"
     "auto_notes": True,
     "review": True,
     "max_review_rounds": 2,

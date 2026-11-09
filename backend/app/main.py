@@ -194,7 +194,8 @@ def raw_material(path: str):
 @app.get("/api/planner")
 def planner_state():
     from . import jobs
-    return {"setup": planner.load_setup(), "files": planner.read_plan(), "plan_dir": planner.PLAN_DIR,
+    return {"setup": planner.load_setup(), "files": planner.read_plan(), "extras": planner.read_plan_extras(),
+            "plan_dir": planner.plan_dir(),
             "running": jobs.running("planner")}
 
 

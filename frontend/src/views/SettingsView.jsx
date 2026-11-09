@@ -214,6 +214,25 @@ function Memory() {
   )
 }
 
+function PlanFolder({ settings, save }) {
+  const toast = useToast()
+  const [v, setV] = useState(settings.plan_folder || '')
+  const commit = async () => {
+    const name = v.trim().replace(/^\/+|\/+$/g, '')
+    if (name === (settings.plan_folder || '')) return
+    await save({ plan_folder: name })
+    toast({ kind: 'success', text: `The study plan now lives in “${name || 'Study Plan'}”.` })
+  }
+  return (
+    <div className="field">
+      <span>Study plan folder</span>
+      <input value={v} placeholder="Study Plan" onChange={(e) => setV(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+      <span className="muted small">A folder inside your notes folder. Quick Plan, Study Plan, Time Estimates and Context live here; any other note in it (for example “Past Exam Coverage”) gets its own tab on the plan page.</span>
+    </div>
+  )
+}
+
 function Folders({ settings, save }) {
   const [pick, setPick] = useState(null)
   return (
@@ -232,6 +251,7 @@ function Folders({ settings, save }) {
           <span className="muted small">{hint}</span>
         </div>
       ))}
+      <PlanFolder settings={settings} save={save} />
       <div className="field">
         <span>Tutor behaviour</span>
         <label className="check-row"><input type="checkbox" checked={settings.review} onChange={(e) => save({ review: e.target.checked })} /> Reviewer checks every reply</label>

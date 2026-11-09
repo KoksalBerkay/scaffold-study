@@ -253,7 +253,8 @@ export default function PlanView({ onStudy }) {
 
   const hasPlan = state && Object.keys(state.files || {}).length > 0
   hasPlanRef.current = !!hasPlan
-  const current = state?.files?.[tab] || ''
+  const allTabs = [...TABS, ...Object.keys(state?.extras || {}).map((n) => ({ id: n, label: n, icon: FileText, extra: true }))]
+  const current = state?.files?.[tab] ?? state?.extras?.[tab] ?? ''
   const { body, meta, offset } = useMemo(() => splitFrontmatter(current), [current])
   const progress = useMemo(() => weekProgress(state?.files?.['Quick Plan'] || ''), [state])
 
@@ -316,7 +317,7 @@ export default function PlanView({ onStudy }) {
   const toggle = async (line, checked, text) => {
     try {
       const r = await api('/api/planner/toggle', { method: 'POST', body: { line, checked, file: tab, text } })
-      setState((st) => ({ ...st, files: { ...st.files, [tab]: r.content } }))
+      setState((st) => (st.extras?.[tab] != null ? { ...st, extras: { ...st.extras, [tab]: r.content } } : { ...st, files: { ...st.files, [tab]: r.content } }))
     } catch (e) { toast({ kind: 'error', text: e.message }); load() }
   }
 
@@ -366,7 +367,7 @@ export default function PlanView({ onStudy }) {
       <header className="page-head">
         <div>
           <div className="eyebrow">Study plan {meta.updated && <span className="muted">· updated {meta.updated}</span>}</div>
-          <h1>{tab === 'Quick Plan' ? 'This week' : TABS.find((t) => t.id === tab)?.label}</h1>
+          <h1>{tab === 'Quick Plan' ? 'This week' : allTabs.find((t) => t.id === tab)?.label}</h1>
         </div>
         <div className="head-actions">
           <a className="btn primary" href="#/planchat"><MessageSquare size={16} /> Talk to your planner</a>
@@ -376,8 +377,8 @@ export default function PlanView({ onStudy }) {
       <TodayCard quickPlan={state.files['Quick Plan']} onTalk={() => { window.location.hash = '/planchat' }} onSend={checkIn} />
 
       <div className="tabs">
-        {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)} disabled={!state.files[t.id]}>
+        {allTabs.map((t) => (
+          <button key={t.id} className={tab === t.id ? 'on' : ''} onClick={() => setTab(t.id)} disabled={!state.files[t.id] && !t.extra}>
             <t.icon size={15} /> {t.label}
           </button>
         ))}
@@ -395,7 +396,7 @@ export default function PlanView({ onStudy }) {
           source={body}
           lineOffset={offset}
           onToggle={toggle}
-          onWikiLink={(name) => { const t = TABS.find((x) => x.id === name); if (t) setTab(t.id) }}
+          onWikiLink={(name) => { const t = allTabs.find((x) => x.id === name); if (t) setTab(t.id) }}
           taskAction={tab === 'Quick Plan' && onStudy ? (raw) => (
             <button className="btn small study-btn" onClick={() => onStudy(raw)}><Play size={13} /> Study this</button>
           ) : null}

@@ -8,11 +8,17 @@ import re
 from pathlib import Path
 
 from . import llm, materials
-from .config import WORKSPACE, notes_dir, render_prompt
+from .config import WORKSPACE, load_settings, notes_dir, render_prompt
 from .files import parse_file_blocks, write_note
 
-PLAN_DIR = "Study Plan"
+DEFAULT_PLAN_DIR = "Study Plan"
 PLAN_FILES = ["Quick Plan", "Study Plan", "Time Estimates", "Context"]
+
+
+def plan_dir() -> str:
+    """The plan's folder inside the notes folder (Settings → Folders → Study plan folder)."""
+    name = (load_settings().get("plan_folder") or "").strip().strip("/")
+    return name or DEFAULT_PLAN_DIR
 
 
 def setup_path() -> Path:
@@ -25,11 +31,22 @@ def load_setup() -> dict | None:
 
 
 def plan_file(name: str) -> Path:
-    return notes_dir() / PLAN_DIR / f"{name}.md"
+    if "/" in name or name.startswith("."):
+        raise ValueError("Bad plan file name")
+    return notes_dir() / plan_dir() / f"{name}.md"
 
 
 def read_plan() -> dict[str, str]:
     return {n: plan_file(n).read_text() for n in PLAN_FILES if plan_file(n).exists()}
+
+
+def read_plan_extras() -> dict[str, str]:
+    """Other markdown files the student keeps in the plan folder (e.g. "Past Exam Coverage")."""
+    d = notes_dir() / plan_dir()
+    if not d.is_dir():
+        return {}
+    return {p.stem: p.read_text() for p in sorted(d.glob("*.md"))
+            if p.stem not in PLAN_FILES and not p.name.startswith(".")}
 
 
 def today_str() -> str:
@@ -77,7 +94,7 @@ async def _write_blocks(text: str) -> list[str]:
         name = Path(path).stem
         if name not in PLAN_FILES:
             continue
-        write_note(f"{PLAN_DIR}/{name}.md", content)
+        write_note(f"{plan_dir()}/{name}.md", content)
         written.append(name)
     return written
 
@@ -125,7 +142,7 @@ async def log_progress(text: str):
         if re.match(r"\s*- \[[xX]\]", line):
             ticked.append(line.strip())
     system = render_prompt("plan_updater", today=today_str())
-    user = ("PLAN FILES:\n" + "\n\n".join(f"<<<FILE notes/{PLAN_DIR}/{k}.md\n{v}\nFILE>>>" for k, v in existing.items())
+    user = ("PLAN FILES:\n" + "\n\n".join(f"<<<FILE notes/{plan_dir()}/{k}.md\n{v}\nFILE>>>" for k, v in existing.items())
             + "\n\nTICKED TASKS IN THE APP:\n" + ("\n".join(ticked) or "(none)")
             + "\n\nSTUDENT'S PROGRESS LOG:\n" + text)
     out = None

@@ -5,14 +5,26 @@ const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7,
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const nice = (d) => d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
 
-/** Parse "### Mon 9 Nov 2026" days and their "- [ ]" tasks from the Quick Plan. */
+/** The year a "9 Nov" heading without a year most likely means: the one closest to today. */
+function nearestYear(month, day) {
+  const now = new Date()
+  let best = now.getFullYear()
+  for (const y of [best - 1, best, best + 1]) {
+    if (Math.abs(new Date(y, month, day) - now) < Math.abs(new Date(best, month, day) - now)) best = y
+  }
+  return best
+}
+
+/** Parse day headings ("### Mon 9 Nov 2026", "### Mon 9 Nov — today, …", "### 9 November") and their "- [ ]" tasks. */
 export function parseDays(src) {
   const days = []
   let cur = null
   ;(src || '').split('\n').forEach((line) => {
-    const h = line.match(/^#{2,4}\s+.*?(\d{1,2})\s+([A-Za-z]{3})[a-z]*\.?\s+(\d{4})/)
-    if (h && MONTHS[h[2].toLowerCase()] != null) {
-      const d = new Date(Number(h[3]), MONTHS[h[2].toLowerCase()], Number(h[1]))
+    const h = line.match(/^#{2,4}\s+(?:[A-Za-z]{3,9}\.?,?\s+)?(\d{1,2})\s+([A-Za-z]{3,9})\.?(?:,?\s+(\d{4}))?(?![\w–-])/)
+    if (h && MONTHS[h[2].slice(0, 3).toLowerCase()] != null) {
+      const month = MONTHS[h[2].slice(0, 3).toLowerCase()]
+      const day = Number(h[1])
+      const d = new Date(h[3] ? Number(h[3]) : nearestYear(month, day), month, day)
       cur = { date: iso(d), label: nice(d), tasks: [] }
       days.push(cur)
       return

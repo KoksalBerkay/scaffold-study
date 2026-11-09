@@ -17,7 +17,7 @@ from . import llm, materials
 from .config import (WORKSPACE, course_memory_path, get_course_memory, get_memory, load_settings, materials_dir,
                      memory_path, notes_dir, read_json, render_prompt, write_atomic)
 from .files import normalize_math, notes_tree, note_target, parse_file_blocks, write_note
-from .planner import PLAN_DIR, plan_file, today_str, with_heartbeat
+from .planner import plan_dir, plan_file, today_str, with_heartbeat
 
 router = APIRouter()
 
@@ -453,7 +453,7 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list
 
     parts.append("## Materials folder\n" + _materials_listing(root))
 
-    tree = [n["path"] for n in notes_tree() if not n["path"].startswith(PLAN_DIR + "/")]
+    tree = [n["path"] for n in notes_tree() if not n["path"].startswith(plan_dir() + "/")]
     parts.append("## Existing notes\n" + ("\n".join(f"- {t}" for t in tree[:120]) or "(none yet)"))
     if tree:
         found.append(f"Checked {len(tree)} existing notes")
@@ -721,7 +721,7 @@ async def notes_job(cid: str, user_msg: dict, asst: dict):
     async with lock:
         try:
             meta = load_meta(cid)
-            tree = [n["path"] for n in notes_tree() if not n["path"].startswith(PLAN_DIR + "/")]
+            tree = [n["path"] for n in notes_tree() if not n["path"].startswith(plan_dir() + "/")]
             candidates = list(dict.fromkeys(meta.get("notes_touched") or []))[-3:]
             existing = "\n\n".join(f"<<<FILE notes/{p}\n{note_target(p).read_text()}\nFILE>>>"
                                    for p in candidates if note_target(p).exists())
@@ -737,7 +737,7 @@ async def notes_job(cid: str, user_msg: dict, asst: dict):
             written = []
             for path, content in parse_file_blocks(out):
                 rel = path[len("notes/"):] if path.startswith("notes/") else path
-                if rel.startswith(PLAN_DIR + "/"):
+                if rel.startswith(plan_dir() + "/"):
                     continue
                 write_note(rel, content)
                 written.append(rel if rel.endswith(".md") else rel + ".md")
