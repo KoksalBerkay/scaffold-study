@@ -54,7 +54,7 @@
 On macOS you can also run `scripts/make-mac-app.sh` once to get a double-clickable **Scaffold.app** with its own icon.
 > macOS blocks self-made apps from reading `~/Documents`, `~/Desktop` and `~/Downloads`. Either clone the repo somewhere else (e.g. `~/Projects`) or add `Scaffold.app` under System Settings → Privacy & Security → Full Disk Access.
 
-The script creates the Python env, installs the frontend packages, builds the UI, generates a small `demo-materials/` folder, and starts the server.
+The script creates the Python env, installs the frontend packages, builds the UI and starts the server (with `--demo`, it also generates the demo semester).
 
 **You need:** Python 3.12+, [uv](https://docs.astral.sh/uv/), Node 20+, and at least one model provider:
 
