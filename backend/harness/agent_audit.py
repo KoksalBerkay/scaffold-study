@@ -161,7 +161,7 @@ REVIEWER = [
       None, must_not=["shorter", "shorten", "trim", "concise", "remove", "cut ", "too long", "length"]),
     R("a tutor that read the student's files with the terminal is trusted",
       "I edited src/diet/Food.java: rawMaterials() now returns rawMaterialsByName.values(), and Java reports a type mismatch. Check my edit.",
-      "Your edit returns a `Collection<RawMaterial>`, but `rawMaterials()` promises a `Collection<NutritionalElement>`. There are two separate problems. First, in your files `RawMaterial` does not implement `NutritionalElement` yet. Second, even after it does, Java will not treat a `Collection<RawMaterial>` as a `Collection<NutritionalElement>`: generic collections do not convert automatically, so we will fix the return line after the first step.\n\n**Next small step:** make `RawMaterial` implement the interface. Which keyword goes in its class declaration, and which method does the interface then require you to add?",
+      "Your edit returns a `Collection<RawMaterial>`, but `rawMaterials()` promises a `Collection<NutritionalElement>`. There are two separate problems. First, in your files `RawMaterial` does not implement `NutritionalElement` yet. Second, even after it does, Java will not treat a `Collection<RawMaterial>` as a `Collection<NutritionalElement>`: generic collections do not convert automatically, so we will fix the return line after the first step.\n\n**Next small step:** change `RawMaterial`'s declaration to `public class RawMaterial implements NutritionalElement {`. The interface then requires `public String getName()` (interface methods must be implemented as `public`); add it so it returns the `name` field.",
       "approve",
       material=("The Tutor (Codex) used normal tools in the student's project. These are the exact commands and what they returned: the Tutor saw all of this.\n\n"
                 "$ cat src/diet/Food.java src/diet/RawMaterial.java src/diet/NutritionalElement.java\n"
@@ -170,6 +170,10 @@ REVIEWER = [
                 "package diet;\npublic class RawMaterial {\n    private String name;\n}\n"
                 "package diet;\npublic interface NutritionalElement {\n    String getName();\n}"),
       must_not=["paste", "cannot see", "can't see", "cannot verify", "can't verify", "share the", "not shown"]),
+    R("telling the exact code for one lab step is guidance, not answer-giving",
+      "Okay, Java reports a type mismatch on rawMaterials(). What's the next step? (We're following the lab README.)",
+      "The README says the returned raw materials are objects implementing `NutritionalElement`. An **interface** is a contract: a class that implements it promises to provide its methods, so its objects can be used wherever the interface type is expected.\n\n**Next step:** in `RawMaterial.java`, change the class declaration to `public class RawMaterial implements NutritionalElement {`. Java will then list the methods you must add; we'll do them one at a time. The collection mismatch is a separate fix after that.",
+      "approve", must_not=["riddle", "hint instead", "do not give the exact", "don't give the exact"]),
     R("a subtle sign error is caught",
       "Can you check my determinant for [[3,-2],[4,1]]? I get 3*1 - (-2)*4 = 11.",
       "Almost: $\\det=3\\cdot1-(-2)\\cdot4=3-8=-5$. Watch the sign: subtracting a negative product.",
