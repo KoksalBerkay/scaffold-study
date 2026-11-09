@@ -27,11 +27,13 @@
 | ✅ **Daily check-in** | Each day mark tasks as *done*, *took a different time* or *skipped* (or "I didn't study today") and press **Update my plan**. Or just tell the Planner in its chat. It reschedules and recalibrates every file. **Study this** opens a tutor chat on that exact exercise. |
 | 🧑‍🏫 **Tutor** | Teaches from zero, anchored to a real exercise. Guides you step by step. Doesn't solve it for you. |
 | 🔍 **Reviewer** | A second agent checks every tutor reply for correctness, completeness and answer-giving *before* you see it. |
-| 🧠 **Personal memory** | Criticise the teaching ("you skipped why this works") and it becomes a lasting rule for **you**. |
-| 📝 **Auto-notes** | Clean, exam-ready notes in the right course folder, with LaTeX math and highlighted code. |
+| 🧠 **Personal memory** | Criticise the teaching ("you skipped why this works") and it becomes a lasting rule for **you**: general rules, plus a separate memory for each course. |
+| 📝 **Notes agent per course** | After every reviewed answer, the course's own Notes agent updates your notes (section by section, so nothing you wrote is lost) and a Notes reviewer checks the change. A card under the answer shows what changed; reply to it ("put the derivation first") and the note is fixed and the preference remembered. |
+| 🔗 **Your Codex chats** | Continue the chats you already have in the Codex app or CLI, not copies. Scaffold sends your messages into the same thread, the Reviewer checks Codex's answers, and the Notes agent takes the notes. |
+| 💬 **Smooth chatting** | Queue a follow-up while it answers (↵) or steer the current answer (⌘↵), stop it, attach screenshots and files anywhere (planner included), and type `/` for commands like `/compact`. A context meter shows when the chat gets compacted. |
 | ✍️ **Live-preview editor** | Formatting, math, tables, callouts, properties and tags render as you type; raw markdown appears only on the line you're editing. Autosaves. |
 | 🔌 **Any model** | ChatGPT subscription (Codex CLI), Claude subscription (Claude Code CLI), OpenAI API key, Anthropic API key. Pick a model per agent in the UI. |
-| 🎛️ **You're in control** | Every system prompt and the memory are editable in Settings. |
+| 🎛️ **You're in control** | Every system prompt and the memory are editable in Settings. Point Scaffold at your existing notes vault, plan folder and course materials. |
 
 <div align="center">
 
@@ -46,6 +48,7 @@
 ```bash
 ./run.sh          # web version: open http://127.0.0.1:8765 in any browser
 ./run.sh --app    # desktop app: the same thing in its own native window
+./run.sh --demo   # the demo semester, in its own workspace-demo/ folder (add --app for the window)
 ```
 
 On macOS you can also run `scripts/make-mac-app.sh` once to get a double-clickable **Scaffold.app** with its own icon.
@@ -72,7 +75,7 @@ cd frontend && npm run dev
 
 ## 🎬 Demo data
 
-No materials at hand? In the planner, click **Load the demo semester**, or **Load demo notes** in Notes. You get 3 courses of synthetic past exams (`demo-materials/`), finished notes for each course, a pre-built study plan, and the Reviewer test reports. Nothing you already have is overwritten.
+No materials at hand? Run `./run.sh --demo`, then in the planner click **Load the demo semester**, or **Load demo notes** in Notes. You get 3 courses of synthetic past exams (`demo-materials/`), finished notes for each course, a pre-built study plan, and the Reviewer test reports. Nothing you already have is overwritten.
 
 ## 🧪 Does the Reviewer actually help?
 
@@ -89,7 +92,10 @@ frontend/  React + Vite · KaTeX math · dark/light theme
 backend/   FastAPI · PyMuPDF (PDF text + page images)
   app/llm.py        one interface for every provider: complete(system, messages, images) → text
   app/planner.py    setup → inventory → Planner → 4 plan files; log progress → Plan updater
-  app/materials.py  scan, classify (exam / solution / slides / exercises), search, render pages
+  app/materials.py  scan, classify (exam / solution / slides / exercises), course-aware search, render pages
+  app/chat.py       Tutor ⇄ Reviewer loop, queue / steer / stop, /commands, compaction, memory
+  app/notesagent.py one Notes agent per course: section edits, Notes reviewer, correction cards
+  app/codexlink.py  read Codex threads from ~/.codex and continue them with `codex exec resume`
   app/prompts/      default prompts (overridable in Settings)
 workspace/          your data, local only: settings, memory, notes, chats, prompt overrides
 ```
