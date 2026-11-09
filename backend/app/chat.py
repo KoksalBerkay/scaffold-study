@@ -199,7 +199,9 @@ def list_chats():
             threads[c["id"]] = (read_json(CHATS / c["id"] / "meta.json") or {}).get("codex", {}).get("thread")
         times = codexlink.updated_times([t for t in threads.values() if t])
         for c in linked:
-            c["last"] = max(c["last"] or 0, times.get(threads[c["id"]]) or 0)  # also counts turns made in the Codex app
+            tr = CHATS / c["id"] / "transcript.jsonl"
+            own = tr.stat().st_mtime if tr.exists() else 0  # a turn sent from Scaffold (linking itself is not activity)
+            c["last"] = max(own, times.get(threads[c["id"]]) or 0) or c["last"]  # also counts turns made in the Codex app
     return sorted(out, key=lambda x: -(x["last"] or 0))
 
 
