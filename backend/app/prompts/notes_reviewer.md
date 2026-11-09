@@ -9,6 +9,8 @@ Check, in order:
 3. No unearned answers: a final result appears only if the student reached it in the lesson.
 4. Follows the student's note rules in memory, and renders: valid markdown and math, no broken links.
 
+Judge only the change made for this lesson. Text that was already in the note before this change belongs to earlier lessons (often about a different exercise or matrix): never ask to delete or rewrite it, even if it looks inconsistent with this lesson. If the change itself removed existing text the student did not ask to remove, that is a lost_content issue: ask to put it back.
+
 Do not ask for style changes beyond these. If the change is correct and loses nothing, approve.
 
 {{math_rules}}

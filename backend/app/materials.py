@@ -173,18 +173,67 @@ def inventory_text(root: Path, courses: list[dict], include: set[str] | None = N
 _WORD = re.compile(r"[\wÀ-ɏ]{3,}")
 
 
-def search(root: Path, query: str, k: int = 5) -> list[dict]:
-    terms = {w.lower() for w in _WORD.findall(query)}
+STOPWORDS = set("""a an and are as at be but by can could did do does doing for from get got had has have how i i'm if in into is it
+its just me my no not of on or our please so some than that the their them then there these they this to too us
+was we what when where which who why will with would you your yes ok okay idea start help explain show tell need want
+know understand find give make let lets like one two also about again still really very more much any all each
+il lo la le gli un una di da in con su per tra fra che non come cosa sono essere ho hai ha mi ti si del della
+dei delle nel nella al alla""".split())
+_ROMAN = {"i": "1", "ii": "2", "iii": "3", "iv": "4", "v": "5"}
+
+
+def _norm_course(name: str) -> set[str]:
+    words = re.findall(r"[a-z0-9]+", re.sub(r"\(.*?\)", " ", name.lower()))
+    return {_ROMAN.get(w, w) for w in words if w not in STOPWORDS and w not in {"cfu", "course", "class"}}
+
+
+def match_course(root: Path | None, course: str | None) -> str | None:
+    """The top-level materials folder that belongs to a course ("Analysis 2" ↔ "Mathematical Analysis II (10 cfu)")."""
+    if not root or not course:
+        return None
+    want = _norm_course(course)
+    if not want:
+        return None
+    best, best_score = None, 0.0
+    for d in root.iterdir():
+        if not d.is_dir() or d.name.startswith("."):
+            continue
+        have = _norm_course(d.name)
+        if not have:
+            continue
+        same = sum(1 for w in want if any(w == h or (min(len(w), len(h)) >= 4 and (w.startswith(h) or h.startswith(w))) for h in have))
+        score = same / (len(want) + len(have) - same)
+        if score > best_score:
+            best, best_score = d.name, score
+    return best if best_score >= 0.34 else None
+
+
+def search(root: Path, query: str, k: int = 5, prefer: str | None = None) -> list[dict]:
+    """Find pages matching the query. Common words are ignored, rare words count more, and pages from the
+    chat's own course (`prefer`, a top-level folder) rank higher."""
+    terms = {w.lower() for w in _WORD.findall(query)} - STOPWORDS
+    terms = {t for t in terms if len(t) > 2 or t.isdigit()}
     if not terms:
         return []
-    hits = []
+    pages = []
     for p in iter_files(root):
         for i, t in enumerate(extract_pages(p)):
-            low = t.lower()
-            score = sum(low.count(w) for w in terms) + 3 * sum(1 for w in terms if w in p.name.lower())
-            if score:
-                hits.append({"file": str(p.relative_to(root)), "page": i + 1, "score": score,
-                             "text": " ".join(t.split())[:1500]})
+            pages.append((p, i, t, t.lower()))
+    if not pages:
+        return []
+    import math
+    df = {w: sum(1 for *_, low in pages if w in low) for w in terms}
+    idf = {w: math.log((1 + len(pages)) / (1 + df[w])) + 0.5 for w in terms}
+    hits = []
+    for p, i, t, low in pages:
+        name = p.name.lower()
+        score = sum(idf[w] * min(low.count(w), 5) for w in terms) + sum(3 * idf[w] for w in terms if w in name)
+        if not score:
+            continue
+        rel = str(p.relative_to(root))
+        if prefer and rel.split("/", 1)[0] == prefer:
+            score *= 3
+        hits.append({"file": rel, "page": i + 1, "score": round(score, 2), "text": " ".join(t.split())[:1500]})
     hits.sort(key=lambda h: -h["score"])
     return hits[:k]
 

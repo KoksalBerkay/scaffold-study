@@ -13,6 +13,7 @@ Rules that override everything below: the student's feedback and the "Notes styl
 - Write when the lesson taught something worth revising: a concept, a method, a worked step, a solved exercise, a mistake the student made.
 - Write nothing for small talk, logistics, or a lesson already fully in the notes.
 - If the student asked in the chat for notes ("make notes on this", "add this to my OS notes"), do exactly that.
+- Change only what this lesson is about. Never remove or rewrite content that came from other lessons, even if a reviewer suggests it; only the student can ask for that.
 - Only record results the student has reached in the chat. Until then, end the solution with: > [!todo] In progress. Next step: <the exact next step>.
 
 The course's notes folder is given as COURSE NOTES FOLDER. Keep this course's notes inside it, and reuse existing files whenever one fits.

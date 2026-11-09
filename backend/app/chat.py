@@ -442,7 +442,8 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list
             found.append(f"Opened {Path(rel).name} from your plan task")
 
     if root and user_text.strip():
-        hits = materials.search(root, user_text, k=4)
+        course_dir = materials.match_course(root, chat_course(meta))
+        hits = materials.search(root, user_text, k=4, prefer=course_dir)
         pinned_rel = {_rel(root, l) for l in meta.get("pinned_files") or []}
         if hits and hits[0]["file"] not in pinned_rel:
             # the student usually names one paper ("the 2 July exam"): give the tutor that whole file, not only snippets
@@ -496,7 +497,7 @@ async def run_tool(name: str, args: dict) -> tuple[str, list[str]]:
     root = materials_dir()
     try:
         if name == "search_materials":
-            hits = materials.search(root, args.get("query", ""), k=5) if root else []
+            hits = materials.search(root, args.get("query", ""), k=5, prefer=args.get("_course_dir")) if root else []
             return "\n\n".join(f"[{h['file']} · page {h['page']}]\n{h['text'][:1200]}" for h in hits) or "No matches.", []
         if name == "read_material":
             p = materials.safe_path(root, args["file"])
