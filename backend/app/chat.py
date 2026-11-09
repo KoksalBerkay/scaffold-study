@@ -174,8 +174,19 @@ def list_chats():
                 meta["folder"] = ensure_folder(TEST_FOLDER)
                 meta["title"] = _harness_title(meta)
                 write_atomic(d / "meta.json", json.dumps(meta, indent=2))
-            out.append({k: meta.get(k) for k in ("id", "title", "updated", "created", "task", "folder", "harness", "badge")})
-    return sorted(out, key=lambda x: -(x["updated"] or 0))
+            item = {k: meta.get(k) for k in ("id", "title", "updated", "created", "task", "folder", "harness", "badge")}
+            item["last"] = last_activity(d, meta)
+            out.append(item)
+    return sorted(out, key=lambda x: -(x["last"] or 0))
+
+
+def last_activity(d: Path, meta: dict) -> float:
+    """When the chat last got a message (not when a background job touched its metadata)."""
+    t = meta.get("created") or 0
+    tr = d / "transcript.jsonl"
+    if tr.exists():
+        t = max(t, tr.stat().st_mtime)
+    return t
 
 
 @router.get("/api/chat-folders")
@@ -567,7 +578,7 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
         if not meta.get("title"):
             meta["title"] = (text or (atts[0]["name"] if atts else "New chat"))[:70]
             save_meta(meta)
-            broadcast({"type": "chats"})
+        broadcast({"type": "chats"})  # this chat moves to the top of its folder
     yield {"type": "user_saved"}
     if meta.get("last_error"):
         meta.pop("last_error", None)
