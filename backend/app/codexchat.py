@@ -19,15 +19,17 @@ from .planner import plan_dir
 TUTOR_HEADER = (
     "[Scaffold] Sent from Scaffold, the student's study app. Before the student sees your reply, a separate "
     "Reviewer checks it (correct? any skipped step or untaught prerequisite? answer given away?) and may send it back "
-    "to you. Teach step by step as usual. Do not create or edit note files: Scaffold's Notes agent writes the notes "
-    "from your reviewed reply. Other files you may edit when the student asks.")
+    "to you. Teach step by step as usual. Do not create, edit or append to note files, and do not include notes in your "
+    "reply: Scaffold's Notes agent writes the notes from your reviewed reply. This replaces any earlier instruction in this "
+    "chat to take notes yourself. Other files you may edit when the student asks.")
 PLANNER_HEADER = (
     "[Scaffold] Sent from Scaffold's study planner. Keep the plan files in \"{plan}\" up to date as you normally do; "
     "Scaffold's plan page shows them.")
 STEER_HEADER = ("[Scaffold] The student stopped your previous answer to add the message below. Take it into account, "
                 "and still answer what they asked before.")
 REVIEW_HEADER = ("[Scaffold Reviewer] The student has not seen your last reply yet. Rewrite it and fix these points. "
-                 "Reply with the complete corrected message for the student only, without mentioning this review:\n")
+                 "Reply with the complete corrected message for the student only, without mentioning this review. "
+                 "Do not write or edit any note files (Scaffold's Notes agent does that):\n")
 
 
 def display_messages(cid: str, meta: dict) -> list[dict]:
