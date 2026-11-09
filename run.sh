@@ -3,6 +3,7 @@
 #   ./run.sh          web version at http://127.0.0.1:8765 (open it in any browser)
 #   ./run.sh --app    desktop app (native window)
 #   add --no-build to skip rebuilding the frontend
+#   add --demo to open the demo semester (its own workspace-demo/ folder, separate from your data)
 set -e
 cd "$(dirname "$0")"
 APP=0; BUILD=1
@@ -10,6 +11,7 @@ for a in "$@"; do
   case "$a" in
     --app) APP=1 ;;
     --no-build) BUILD=0 ;;
+    --demo) export SCAFFOLD_WORKSPACE="$PWD/workspace-demo" ;;
   esac
 done
 if [ ! -d backend/.venv ]; then
