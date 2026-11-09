@@ -51,8 +51,8 @@
 ./run.sh --demo   # the demo semester, in its own workspace-demo/ folder on port 8766 (add --app for the window)
 ```
 
-On macOS you can also run `scripts/make-mac-app.sh` once to get a double-clickable **Scaffold.app** with its own icon.
-> macOS blocks self-made apps from reading `~/Documents`, `~/Desktop` and `~/Downloads`. Either clone the repo somewhere else (e.g. `~/Projects`) or add `Scaffold.app` under System Settings → Privacy & Security → Full Disk Access.
+**As a real Mac app** (Spotlight, Launchpad, Dock): run `scripts/make-mac-app.sh` once. It installs **Scaffold.app** into `~/Applications`, so ⌘Space → "Scaffold" opens it.
+> macOS protects `~/Documents`, `~/Desktop` and iCloud Drive from apps you made yourself. Allow Scaffold once: System Settings → Privacy & Security → **Full Disk Access** → **+** → choose `~/Applications/Scaffold.app` → turn it on. (Running `./run.sh` from Terminal needs nothing extra.)
 
 The script creates the Python env, installs the frontend packages, builds the UI and starts the server (with `--demo`, it also generates the demo semester).
 

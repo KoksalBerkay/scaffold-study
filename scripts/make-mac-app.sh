@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Creates Scaffold.app (double-click / Dock) that launches the desktop app from this repo.
+# Creates Scaffold.app, a real macOS app (Spotlight, Launchpad, Dock) that launches the desktop app from this repo.
+#   scripts/make-mac-app.sh                 → ~/Applications/Scaffold.app (Spotlight finds it)
+#   scripts/make-mac-app.sh /Applications   → install somewhere else
 set -e
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
-APP="$REPO/Scaffold.app"
+DEST="${1:-$HOME/Applications}"
+mkdir -p "$DEST"
+APP="$DEST/Scaffold.app"
+rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$REPO/assets/Scaffold.icns" "$APP/Contents/Resources/Scaffold.icns"
 cat > "$APP/Contents/MacOS/Scaffold" <<SH
@@ -25,7 +30,11 @@ cat > "$APP/Contents/Info.plist" <<PL
   <key>CFBundleVersion</key><string>1.0</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSDocumentsFolderUsageDescription</key><string>Scaffold runs from its folder in Documents and reads your notes.</string>
+  <key>NSDesktopFolderUsageDescription</key><string>Scaffold reads the course materials you keep on the Desktop.</string>
+  <key>NSDownloadsFolderUsageDescription</key><string>Scaffold reads course materials you downloaded.</string>
 </dict></plist>
 PL
 mkdir -p "$REPO/workspace"
-echo "Created $APP. Build the frontend once with ./run.sh, then double-click Scaffold.app."
+touch "$APP"  # let Spotlight and Launchpad notice it
+echo "Created $APP. Open it from Spotlight (⌘Space, type Scaffold). The first launch builds nothing: run ./run.sh once first if you never did."
