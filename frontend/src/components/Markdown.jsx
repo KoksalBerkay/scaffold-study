@@ -75,7 +75,7 @@ function preprocess(src) {
     .replace(/\\\((.+?)\\\)/g, (_, m) => `$${m}$`)
     .replace(/\[\[([^\]|#]*)(#\^?[^\]|]*)?(?:\|([^\]]+))?\]\]/g, (_, page, anchor, label) => {
       const text = label || page || (anchor || '').replace(/^#\^?/, '')
-      return `[${text}](wiki:${encodeURIComponent(page || '')})`
+      return `[${text}](wiki:${encodeURIComponent((page || '') + (anchor || ''))})`
     })
     .replace(/[ \t]\^[\w-]+$/gm, '')
     .replace(/^> \[!(\w+)\][-+]?[ \t]*(.*)$/gm, (_, kind, title) => `> **${title || kind[0].toUpperCase() + kind.slice(1)}**`)
@@ -95,7 +95,7 @@ function tagify(src) {
   ))).join('')
 }
 
-export default function Markdown({ source, onToggle, onWikiLink, taskAction, lineOffset = 0, className = '' }) {
+export default function Markdown({ source, onToggle, onWikiLink, onLink, taskAction, lineOffset = 0, className = '' }) {
   const lines = (source || '').split('\n')
   const components = {
     a({ href = '', children, node, ...rest }) {
@@ -109,6 +109,10 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
       if (href.startsWith('tag:')) return <span className="md-tag">{children}</span>
       if (href.startsWith('file://')) {
         return <a href={materialUrl(href)} target="_blank" rel="noreferrer" className="material-link" title="Open the file">{children}</a>
+      }
+      // links inside the notes (another note, a heading): the notes view opens them itself
+      if (onLink && !/^[a-z][\w+.-]*:/i.test(href)) {
+        return <a href="#" onClick={(e) => { e.preventDefault(); onLink(href) }}>{children}</a>
       }
       return <a href={href} target="_blank" rel="noreferrer" {...rest}>{children}</a>
     },

@@ -846,3 +846,6 @@ a.btn { text-decoration: none; }
 .md table td, .live-editor .lp-table td { min-width: 4.5em; }
 .md table td:has(> .katex), .md table td code { white-space: nowrap; }
 .usage-line { margin-top: 6px; }
+/* nested notes tree: a faint guide line per folder level */
+.tree-children { position: relative; }
+.tree-children::before { content: ''; position: absolute; left: var(--indent); top: 2px; bottom: 2px; width: 1px; background: var(--border); }

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { FileText, Folder, FolderOpen, ChevronRight, BookOpen, PencilLine, Search, Check, Loader2, FilePlus } from 'lucide-react'
-import { api, apiRetry, setBusy } from '../api'
+import { api, apiRetry, setBusy, materialUrl } from '../api'
 import Markdown, { Properties, splitFrontmatter } from '../components/Markdown'
 import LiveEditor from '../components/LiveEditor'
 import { useToast } from '../components/ui'
@@ -15,13 +15,16 @@ export default function NotesView({ initial }) {
   const [reading, setReading] = useState(false)
   const [saveState, setSaveState] = useState('saved') // saved | dirty | saving
   const [q, setQ] = useState('')
-  // folders the student opened in the list (remembered); the open note's folder is always shown
-  const [openFolders, setOpenFolders] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem('scaffold:notes-open') || '[]')) } catch { return new Set() } })
-  const toggleFolder = (f) => setOpenFolders((s0) => {
-    const s1 = new Set(s0); if (s1.has(f)) s1.delete(f); else s1.add(f)
-    try { localStorage.setItem('scaffold:notes-open', JSON.stringify([...s1])) } catch { /* private mode */ }
+  const [anchor, setAnchor] = useState(null) // { path, id, seq }: a heading or block a link asked to show
+  // folders the student opened or closed in the list (remembered): { 'A/B': true | false }
+  const [folderState, setFolderState] = useState(() => { try { return JSON.parse(localStorage.getItem('scaffold:notes-folders') || '{}') || {} } catch { return {} } })
+  const setFolders = (patch) => setFolderState((s0) => {
+    const s1 = { ...s0, ...patch }
+    try { localStorage.setItem('scaffold:notes-folders', JSON.stringify(s1)) } catch { /* private mode */ }
     return s1
   })
+  const docRef = useRef(null)
+  const revealed = useRef(null) // the note whose folders were last opened in the list
   const treeRef = useRef(null)
   const timer = useRef(null)
   const latest = useRef({ sel, text: null })
@@ -33,8 +36,14 @@ export default function NotesView({ initial }) {
   useEffect(() => { loadTree() }, [])
   useEffect(() => { if (initial) setSel(initial) }, [initial])
   useEffect(() => {
-    // show the open note in the list
+    // show the open note in the list: open its folders, then scroll to it
     if (!sel || !tree) return
+    if (revealed.current !== sel) {
+      revealed.current = sel
+      const parts = sel.split('/').slice(0, -1)
+      const shut = parts.map((_, i) => parts.slice(0, i + 1).join('/')).filter((f) => folderState[f] !== true)
+      if (shut.length) setFolders(Object.fromEntries(shut.map((f) => [f, true])))
+    }
     const t = setTimeout(() => {
       const el = treeRef.current?.querySelector(`[data-path="${CSS.escape(sel)}"]`)
       el?.scrollIntoView({ block: 'nearest' })
@@ -98,17 +107,103 @@ export default function NotesView({ initial }) {
     timer.current = setTimeout(flush, 700)
   }
 
-  const groups = useMemo(() => {
-    const g = {}
-    ;(tree?.notes || []).filter((n) => !q || n.path.toLowerCase().includes(q.toLowerCase()))
-      .forEach((n) => { (g[n.folder || 'Notes'] = g[n.folder || 'Notes'] || []).push(n) })
-    return Object.entries(g).sort()
+  // Nested folder tree: { name, path, folders: [...], notes: [...], count }
+  const root = useMemo(() => {
+    const top = { name: '', path: '', kids: {}, notes: [], count: 0 }
+    ;(tree?.notes || []).filter((n) => !q || n.path.toLowerCase().includes(q.toLowerCase())).forEach((n) => {
+      let node = top
+      top.count++
+      for (const part of (n.folder ? n.folder.split('/') : [])) {
+        const path = node.path ? `${node.path}/${part}` : part
+        node = node.kids[part] = node.kids[part] || { name: part, path, kids: {}, notes: [], count: 0 }
+        node.count++
+      }
+      node.notes.push(n)
+    })
+    const finish = (node) => ({ ...node, folders: Object.values(node.kids).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })).map(finish) })
+    return finish(top)
   }, [tree, q])
 
-  const openWiki = (name) => {
-    const n = tree?.notes.find((x) => x.name === name.split(' › ')[0])
-    if (n) setSel(n.path)
+  /** Find a note by a link target: a name ("Past Exams") or a path ("Databases/Past Exams"), preferring the open note's folder. */
+  const findNote = (target) => {
+    const t = target.replace(/\.md$/i, '').replace(/^\/+/, '').toLowerCase()
+    if (!t) return null
+    const notes = tree?.notes || []
+    const here = sel.split('/').slice(0, -1).join('/')
+    const byPath = notes.find((n) => n.path.replace(/\.md$/i, '').toLowerCase() === t)
+      || notes.find((n) => n.path.replace(/\.md$/i, '').toLowerCase() === (here ? `${here}/${t}` : t).toLowerCase())
+    if (byPath) return byPath
+    const base = t.split('/').pop()
+    const named = notes.filter((n) => n.path.split('/').pop().replace(/\.md$/i, '').toLowerCase() === base
+      && (!t.includes('/') || n.path.replace(/\.md$/i, '').toLowerCase().endsWith(t)))
+    return named.find((n) => n.folder === here) || named[0] || null
   }
+
+  /** Open a note (and optionally a heading or ^block in it). An empty page means the open note. */
+  const goTo = (page, anchorId) => {
+    const n = page ? findNote(page) : tree?.notes.find((x) => x.path === sel) || { path: sel }
+    if (!n) { toast({ kind: 'error', text: `There is no note called "${page}" yet.` }); return }
+    if (n.path !== sel) { flush(); setSel(n.path) }
+    setAnchor(anchorId ? { path: n.path, id: anchorId, seq: Date.now() } : null)
+  }
+
+  const openWiki = (target) => {
+    const [page, ...rest] = target.split('#')
+    const id = rest.filter(Boolean).pop() // Obsidian allows "Note#Section#Subsection": the last one is the target
+    goTo(page.trim(), id && id.trim())
+  }
+
+  const openExternal = (url) => {
+    const a = document.createElement('a')
+    a.href = url; a.target = '_blank'; a.rel = 'noreferrer'
+    document.body.appendChild(a); a.click(); a.remove()
+  }
+
+  const openLink = (href) => {
+    if (!href) return
+    if (href.startsWith('file://')) return openExternal(materialUrl(href))
+    if (/^(https?|mailto):/i.test(href)) return openExternal(href)
+    if (/^[a-z][\w+.-]*:/i.test(href)) return // other schemes (javascript:, data:, …) never open
+    let raw = href
+    try { raw = decodeURIComponent(href) } catch { /* keep as written */ }
+    const [page, ...rest] = raw.split('#')
+    goTo(page.trim(), rest.filter(Boolean).pop()?.trim())
+  }
+
+  // Reading view: scroll to the heading a link asked for
+  useEffect(() => {
+    if (!reading || !anchor || anchor.path !== sel || content == null) return
+    const norm = (t) => t.replace(/\s+/g, ' ').trim().toLowerCase()
+    const t = setTimeout(() => {
+      const h = [...(docRef.current?.querySelectorAll('h1, h2, h3, h4, h5, h6') || [])].find((el) => norm(el.textContent) === norm(anchor.id))
+      h?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }, 30)
+    return () => clearTimeout(t)
+  }, [anchor, reading, content, sel])
+
+  const renderFolder = (node, depth) => {
+    const isOpen = !!q || (folderState[node.path] ?? (depth === 0 && root.folders.length <= 4))
+    return (
+      <div key={node.path} className="tree-group">
+        <button className="tree-folder" style={{ paddingLeft: 8 + depth * 14 }} onClick={() => setFolders({ [node.path]: !isOpen })} aria-expanded={isOpen}>
+          <ChevronRight size={13} className={`chev ${isOpen ? 'rot90' : ''}`} />
+          {isOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
+          <span className="grow">{node.name}</span><span className="tree-count">{node.count}</span>
+        </button>
+        {isOpen && (
+          <div className="tree-children" style={{ '--indent': `${15 + depth * 14}px` }}>
+            {node.folders.map((f) => renderFolder(f, depth + 1))}
+            {node.notes.map((n) => noteItem(n, depth + 1))}
+          </div>
+        )}
+      </div>
+    )
+  }
+  const noteItem = (n, depth) => (
+    <button key={n.path} data-path={n.path} className={`tree-item ${sel === n.path ? 'on' : ''}`} style={{ paddingLeft: 8 + depth * 14 }} onClick={() => setSel(n.path)}>
+      <FileText size={14} /> {n.name}
+    </button>
+  )
 
   const newNote = async () => {
     const folder = sel.includes('/') ? sel.split('/').slice(0, -1).join('/') + '/' : ''
@@ -129,23 +224,8 @@ export default function NotesView({ initial }) {
           <button className="icon-btn ghost" onClick={newNote} title="New note"><FilePlus size={16} /></button>
         </div>
         {tree && tree.notes.length === 0 && <p className="muted small pad">No notes yet. They appear here as you study.</p>}
-        {groups.map(([folder, notes]) => {
-          const isOpen = groups.length <= 4 || !!q || openFolders.has(folder) || notes.some((n) => n.path === sel)
-          return (
-            <div key={folder} className="tree-group">
-              <button className="tree-folder" onClick={() => toggleFolder(folder)} aria-expanded={isOpen}>
-                <ChevronRight size={13} className={`chev ${isOpen ? 'rot90' : ''}`} />
-                {isOpen ? <FolderOpen size={14} /> : <Folder size={14} />}
-                <span className="grow">{folder}</span><span className="tree-count">{notes.length}</span>
-              </button>
-              {isOpen && notes.map((n) => (
-                <button key={n.path} data-path={n.path} className={`tree-item ${sel === n.path ? 'on' : ''}`} onClick={() => setSel(n.path)}>
-                  <FileText size={14} /> {n.name}
-                </button>
-              ))}
-            </div>
-          )
-        })}
+        {root.folders.map((f) => renderFolder(f, 0))}
+        {root.notes.map((n) => noteItem(n, 0))}
         {tree && <p className="muted tiny pad mono" title={tree.root}>{tree.root}</p>}
       </div>
       <div className="notes-view">
@@ -169,8 +249,8 @@ export default function NotesView({ initial }) {
               : content == null
               ? <p className="muted">Loading…</p>
               : reading
-                ? <div className="note-doc"><Properties props={splitFrontmatter(current).props} /><Markdown source={splitFrontmatter(current).body} onWikiLink={openWiki} /></div>
-                : <LiveEditor key={sel} value={current} onChange={onEdit} onWikiLink={openWiki} />}
+                ? <div className="note-doc" ref={docRef}><Properties props={splitFrontmatter(current).props} /><Markdown source={splitFrontmatter(current).body} onWikiLink={openWiki} onLink={openLink} /></div>
+                : <LiveEditor key={sel} value={current} onChange={onEdit} onWikiLink={openWiki} onLink={openLink} anchor={anchor?.path === sel ? anchor : null} />}
           </div>
         )}
       </div>

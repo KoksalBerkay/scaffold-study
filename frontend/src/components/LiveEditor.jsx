@@ -35,9 +35,9 @@ function inlineHTML(s) {
   const maths = []
   let out = s.replace(/\$([^$\n]+?)\$/g, (_, m) => { maths.push(m); return `\u0000${maths.length - 1}\u0000` })
   out = esc(out)
-    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '<span class="lp-wikilink">$2</span>')
-    .replace(/\[\[([^\]]+)\]\]/g, (_, a) => `<span class="lp-wikilink">${a.replace(/^#\^?/, '')}</span>`)
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<span class="lp-link">$1</span>')
+    .replace(/\[\[([^\]|]+)\|([^\]]+)\]\]/g, '<span class="lp-wikilink" data-wiki="$1">$2</span>')
+    .replace(/\[\[([^\]]+)\]\]/g, (_, a) => `<span class="lp-wikilink" data-wiki="${a}">${a.replace(/^#\^?/, '')}</span>`)
+    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+&quot;[^)]*&quot;)?\)/g, '<span class="lp-link" data-href="$2">$1</span>')
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
     .replace(/`([^`]+)`/g, '<code>$1</code>')
@@ -229,8 +229,10 @@ function build(state) {
           const marks = []
           for (let c = n.firstChild; c; c = c.nextSibling) if (c.name === 'LinkMark') marks.push(c)
           if (marks.length >= 2 && !touches(sel, from, to)) {
+            const url = n.getChild('URL')
+            const href = url ? doc.sliceString(url.from, url.to).replace(/^<|>$/g, '') : ''
             add(marks[0].from, marks[0].to, hide)
-            add(marks[0].to, marks[1].from, mark('lp-link'))
+            add(marks[0].to, marks[1].from, Decoration.mark({ class: 'lp-link', attributes: { 'data-href': href } }))
             add(marks[1].from, to, hide)
             return false
           }
@@ -349,12 +351,14 @@ function build(state) {
       const label = m[2] || m[1].replace(/^#\^?/, '').replace(/#\^?/, ' › ')
       const startLabel = m[2] ? a + 3 + m[1].length : a + 2
       const endLabel = m[2] ? b - 2 : b - 2
+      const target = m[1]
+      const wiki = Decoration.mark({ class: 'lp-wikilink', attributes: { 'data-wiki': target } })
       if (m[2]) {
-        add(a, startLabel, hide); add(startLabel, endLabel, mark('lp-wikilink')); add(endLabel, b, hide)
+        add(a, startLabel, hide); add(startLabel, endLabel, wiki); add(endLabel, b, hide)
       } else if (label === m[1]) {
-        add(a, a + 2, hide); add(a + 2, b - 2, mark('lp-wikilink')); add(b - 2, b, hide)
+        add(a, a + 2, hide); add(a + 2, b - 2, wiki); add(b - 2, b, hide)
       } else {
-        add(a, b, Decoration.replace({ widget: new (class extends WidgetType { eq(o) { return o.l === this.l } constructor() { super(); this.l = label } toDOM() { const s = document.createElement('span'); s.className = 'lp-wikilink'; s.textContent = label; return s } })() }))
+        add(a, b, Decoration.replace({ widget: new (class extends WidgetType { eq(o) { return o.l === this.l && o.t === this.t } constructor() { super(); this.l = label; this.t = target } toDOM() { const s = document.createElement('span'); s.className = 'lp-wikilink'; s.dataset.wiki = this.t; s.textContent = label; return s } })() }))
       }
     } else add(a, b, mark('lp-link-src'))
   }
@@ -391,11 +395,30 @@ const theme = EditorView.theme({
   '.cm-scroller': { overflow: 'visible' },
 })
 
-export default function LiveEditor({ value, onChange, onWikiLink, placeholder }) {
+/** Put the cursor on a heading (`# Title`) or block id (`^id`) and scroll it into view. Returns whether it was found. */
+function goToAnchor(v, anchor) {
+  const doc = v.state.doc
+  const block = anchor.startsWith('^')
+  const want = anchor.replace(/^\^/, '')
+  const norm = (t) => t.replace(/[*_`[\]]/g, '').trim().toLowerCase()
+  for (let i = 1; i <= doc.lines; i++) {
+    const l = doc.line(i)
+    const hit = block
+      ? l.text.endsWith(' ^' + want) || l.text.endsWith('\t^' + want)
+      : /^#{1,6}\s/.test(l.text) && norm(l.text.replace(/^#{1,6}\s+/, '')) === norm(want)
+    if (hit) {
+      v.dispatch({ selection: { anchor: l.from }, effects: EditorView.scrollIntoView(l.from, { y: 'start', yMargin: 80 }) })
+      return true
+    }
+  }
+  return false
+}
+
+export default function LiveEditor({ value, onChange, onWikiLink, onLink, anchor, placeholder }) {
   const host = useRef(null)
   const view = useRef(null)
-  const cb = useRef({ onChange, onWikiLink })
-  cb.current = { onChange, onWikiLink }
+  const cb = useRef({ onChange, onWikiLink, onLink })
+  cb.current = { onChange, onWikiLink, onLink }
 
   useEffect(() => {
     const v = new EditorView({
@@ -415,19 +438,32 @@ export default function LiveEditor({ value, onChange, onWikiLink, placeholder })
           theme,
           phExt(placeholder || 'Start writing…'),
           EditorView.updateListener.of((u) => { if (u.docChanged && !u.transactions.some((t) => t.annotation(external))) cb.current.onChange?.(u.state.doc.toString()) }),
-          EditorView.domEventHandlers({
-            mousedown(e) {
-              const wl = e.target.closest?.('.lp-wikilink')
-              if (wl && (e.metaKey || e.ctrlKey)) { e.preventDefault(); cb.current.onWikiLink?.(wl.textContent); return true }
-              return false
-            },
-          }),
         ],
       }),
     })
     view.current = v
-    return () => v.destroy()
+    // Clicking a rendered link opens it (as in Obsidian). Listened for on the host, in the capture phase, so it also
+    // works inside rendered tables (widgets) and runs before CodeMirror moves the cursor and shows the link's source.
+    const open = (e) => {
+      if (e.button !== 0) return
+      const el = e.target.closest?.('[data-wiki], [data-href]')
+      if (!el || !host.current.contains(el)) return
+      e.preventDefault(); e.stopPropagation()
+      if (e.type !== 'mousedown') return
+      if (el.dataset.wiki != null) cb.current.onWikiLink?.(el.dataset.wiki)
+      else cb.current.onLink?.(el.dataset.href)
+    }
+    const h = host.current
+    h.addEventListener('mousedown', open, true)
+    h.addEventListener('click', open, true)
+    return () => { h.removeEventListener('mousedown', open, true); h.removeEventListener('click', open, true); v.destroy() }
   }, []) // eslint-disable-line
+
+  // Jump to a heading or block when a link asked for one (anchor = { id, seq } so the same link works twice)
+  useEffect(() => {
+    const v = view.current
+    if (v && anchor?.id) goToAnchor(v, anchor.id)
+  }, [anchor])
 
   // External updates (e.g. the Note-taker rewrote the file)
   useEffect(() => {
