@@ -10,6 +10,8 @@ export default function NotesView({ initial }) {
   const [tree, setTree] = useState(null)
   const [sel, setSel] = useState(initial || '')
   const [content, setContent] = useState(null)
+  const [loadError, setLoadError] = useState(null) // the note exists but could not be read: never open an empty editor over it
+  const [reload, setReload] = useState(0)
   const [reading, setReading] = useState(false)
   const [saveState, setSaveState] = useState('saved') // saved | dirty | saving
   const [q, setQ] = useState('')
@@ -23,6 +25,9 @@ export default function NotesView({ initial }) {
   const treeRef = useRef(null)
   const timer = useRef(null)
   const latest = useRef({ sel, text: null })
+  const saving = useRef(null) // the save in flight: saves go out one at a time, in order
+  const held = useRef(false) // whether unsaved edits hold off the auto-update reload
+  const hold = (on) => { if (held.current !== on) { held.current = on; setBusy(on) } }
 
   const loadTree = () => apiRetry('/api/notes').then(setTree).catch(() => {})
   useEffect(() => { loadTree() }, [])
@@ -39,24 +44,34 @@ export default function NotesView({ initial }) {
 
   const flush = async () => {
     clearTimeout(timer.current)
-    const { sel: path, text } = latest.current
+    const edit = latest.current
+    const { sel: path, text } = edit
     if (text == null || !path) return
-    setSaveState('saving')
-    try {
-      await api('/api/notes/file', { method: 'PUT', body: { path, content: text } })
-      if (latest.current.text != null) setBusy(false)
-      latest.current.text = null
-      setSaveState('saved')
-    } catch (e) { setSaveState('dirty'); toast({ kind: 'error', text: `Could not save: ${e.message}` }) }
+    const prev = saving.current
+    const run = (async () => {
+      await prev
+      setSaveState('saving')
+      try {
+        await api('/api/notes/file', { method: 'PUT', body: { path, content: text } })
+        // only what was saved is clean: edits typed during the save stay pending for the next one
+        if (latest.current === edit) { latest.current = { sel: path, text: null }; setContent(text) }
+        if (latest.current.text == null) { hold(false); setSaveState('saved') }
+      } catch (e) { setSaveState('dirty'); toast({ kind: 'error', text: `Could not save: ${e.message}` }) }
+    })()
+    saving.current = run
+    await run
   }
 
   useEffect(() => {
     if (!sel) return
     flush()
     setContent(null)
-    api(`/api/notes/file?path=${encodeURIComponent(sel)}`).then((r) => { setContent(r.content); setSaveState('saved') }).catch(() => setContent(''))
+    setLoadError(null)
+    let live = true // a slower answer for the previous note must not land in this one
+    api(`/api/notes/file?path=${encodeURIComponent(sel)}`).then((r) => { if (live) { setContent(r.content); setSaveState('saved') } }).catch((e) => { if (!live) return; if (e.status === 404) setContent(''); else setLoadError(e.message || 'Could not reach Scaffold') })
     latest.current = { sel, text: null }
-  }, [sel]) // eslint-disable-line
+    return () => { live = false }
+  }, [sel, reload]) // eslint-disable-line
 
   // Live-reload when a background agent rewrites the open note (only if there are no unsaved edits)
   useEffect(() => {
@@ -65,8 +80,10 @@ export default function NotesView({ initial }) {
       const ev = JSON.parse(m.data)
       if (ev.type !== 'notes') return
       loadTree()
-      if (ev.paths.includes(latest.current.sel) && latest.current.text == null) {
-        api(`/api/notes/file?path=${encodeURIComponent(latest.current.sel)}`).then((r) => setContent(r.content))
+      const path = latest.current.sel
+      if (ev.paths.includes(path) && latest.current.text == null) {
+        api(`/api/notes/file?path=${encodeURIComponent(path)}`)
+          .then((r) => { if (latest.current.sel === path && latest.current.text == null) setContent(r.content) }).catch(() => {})
       }
     }
     return () => es.close()
@@ -74,7 +91,7 @@ export default function NotesView({ initial }) {
   useEffect(() => () => flush(), []) // eslint-disable-line
 
   const onEdit = (text) => {
-    if (latest.current.text == null) setBusy(true)
+    hold(true)
     latest.current = { sel, text }
     setSaveState('dirty')
     clearTimeout(timer.current)
@@ -147,11 +164,13 @@ export default function NotesView({ initial }) {
               </div>
             </div>
             <h1 className="note-title">{sel.split('/').pop().replace(/\.md$/, '')}</h1>
-            {content == null
+            {loadError
+              ? <p className="muted">This note could not be loaded ({loadError}). <button className="link" onClick={() => setReload((n) => n + 1)}>Try again</button></p>
+              : content == null
               ? <p className="muted">Loading…</p>
               : reading
                 ? <div className="note-doc"><Properties props={splitFrontmatter(current).props} /><Markdown source={splitFrontmatter(current).body} onWikiLink={openWiki} /></div>
-                : <LiveEditor key={sel} value={content} onChange={onEdit} onWikiLink={openWiki} />}
+                : <LiveEditor key={sel} value={current} onChange={onEdit} onWikiLink={openWiki} />}
           </div>
         )}
       </div>

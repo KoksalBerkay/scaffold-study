@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -81,6 +81,9 @@ function preprocess(src) {
     .replace(/^> \[!(\w+)\][-+]?[ \t]*(.*)$/gm, (_, kind, title) => `> **${title || kind[0].toUpperCase() + kind.slice(1)}**`)
 }
 
+/** Our own link kinds pass; everything else goes through react-markdown's filter (no javascript: or data: URLs from model output or notes). */
+const urlTransform = (u) => (/^(wiki|tag):/.test(u) || u.startsWith('file://') ? u : defaultUrlTransform(u))
+
 function tagify(src) {
   return src.split(/(```[\s\S]*?```|`[^`\n]*`|\$\$[\s\S]*?\$\$|\$[^$\n]*\$)/).map((part, i) => (i % 2 ? part : part.replace(
     /(^|[\s(])#([\p{L}_\-/][\p{L}\p{N}_\-/]*)/gmu,
@@ -146,7 +149,7 @@ export default function Markdown({ source, onToggle, onWikiLink, taskAction, lin
       <ReactMarkdown
         remarkPlugins={[remarkGfm, [remarkMath, { singleDollarTextMath: true }]]}
         rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }], [rehypeHighlight, { detect: false, ignoreMissing: true, aliases: { cpp: ['c++'], bash: ['sh', 'zsh', 'shell'] } }]]}
-        urlTransform={(u) => u}
+        urlTransform={urlTransform}
         components={components}
       >
         {tagify(preprocess(source || ''))}

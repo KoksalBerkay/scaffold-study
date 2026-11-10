@@ -30,14 +30,17 @@ function ReviewBadge({ review }) {
   if (!review.enabled) return <div className="review-badge off">Not reviewed</div>
   const fixes = review.rounds.filter((r) => r.verdict === 'revise').reduce((n, r) => n + (r.issues?.length || 0), 0)
   const ok = review.final !== 'best_effort'
+  // the reviewer could not run or its reply could not be read: the answer was shown without (a full) review
+  const unchecked = review.rounds.some((r) => r.verdict === 'unavailable' || r.verdict === 'unreadable')
   return (
     <div className="review">
       <button className={`review-badge ${ok ? 'ok' : 'warn'}`} onClick={() => setOpen(!open)} aria-expanded={open}>
         {ok ? <ShieldCheck size={14} /> : <ShieldAlert size={14} />}
-        <span>{ok ? 'Reviewed' : 'Reviewed with open issues'}</span>
+        <span>{ok ? 'Reviewed' : unchecked ? (fixes > 0 ? 'Not fully reviewed' : 'Not reviewed') : 'Reviewed with open issues'}</span>
         {fixes > 0 && <span className="sep">·</span>}
         {fixes > 0 && (review.student_note ? <InlineMd text={review.student_note} /> : <span>{`${fixes} fix${fixes > 1 ? 'es' : ''} before you saw it`}</span>)}
-        {fixes === 0 && <span className="muted">· approved first time</span>}
+        {fixes === 0 && unchecked && review.student_note && <span className="muted">· {review.student_note}</span>}
+        {fixes === 0 && !unchecked && <span className="muted">· approved first time</span>}
         {fixes > 0 && <ChevronDown size={14} className={open ? 'rot' : ''} />}
       </button>
       {open && fixes > 0 && (
@@ -461,6 +464,9 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
 
   // an answer started from another window (or the queue): follow it here too
   const tracking = useRef(false)
+  // stop following the answer when this chat closes: the stream must not keep a connection or write here
+  const aborter = useRef(null)
+  useEffect(() => { const ac = new AbortController(); aborter.current = ac; return () => ac.abort() }, [])
   useEffect(() => {
     const h = (e) => { if (e.detail === chatId && !tracking.current) { load(); track() } }
     window.addEventListener('scaffold:turn', h)
@@ -501,14 +507,17 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const track = async () => {
     if (tracking.current) return
     tracking.current = true
-    try { await trackOnce() } finally { tracking.current = false }
+    markBusy(true)
+    try { await trackOnce() } finally { tracking.current = false; markBusy(false) }
   }
   const trackOnce = async () => {
     setBusy((b) => b || { stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] })
-    markBusy(true)
     setFailed(null)
+    const signal = aborter.current?.signal
     const res = await follow(`/api/chats/${chatId}/events`, (ev) => {
       if (ev.type === 'reconnecting') return setBusy((b) => (b ? { ...b, reconnecting: true } : b))
+      // a newer answer replaced the one we followed while the connection was down: show the finished one, follow the new one
+      if (ev.type === 'restart') { setBusy({ stage: 'context', elapsed: 0, detail: '', rounds: 0, activity: [] }); load(); return }
       setBusy((b) => {
         if (!b) return b
         const nb = { ...b, reconnecting: false }
@@ -520,7 +529,8 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       })
       if (ev.type === 'queue') setQueue(ev.queue || [])
       if (ev.type === 'user_saved') { onChanged?.(); load() }
-    })
+    }, { signal })
+    if (signal?.aborted) return
     const c = await load()
     if (c.running) {
       // the next message (a steer or a queued one) already started: keep following it
@@ -528,7 +538,6 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       return trackOnce()
     }
     setBusy(null)
-    markBusy(false)
     if (res.error && c.messages?.length && c.messages[c.messages.length - 1].role === 'user') setFailed(res.error)
     else if (res.error) toast({ kind: 'error', title: 'The tutor could not answer', text: res.error, timeout: 10000 })
     taRef.current?.focus()
@@ -602,7 +611,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   }
 
   const toggleSetting = async (key) => {
-    const s = await api('/api/settings', { method: 'PUT', body: { ...settings, [key]: !settings[key] } })
+    const s = await api('/api/settings', { method: 'PUT', body: { [key]: !settings[key] } })
     setSettings(s)
   }
 
@@ -650,7 +659,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             )}
             {catalog && !chat?.codex && settings.roles?.planner && (
               <ModelPicker compact catalog={catalog} value={settings.roles.planner} align="right"
-                onChange={async (cfg) => { const s2 = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, planner: cfg } } }); setSettings(s2) }} />
+                onChange={async (cfg) => { const s2 = await api('/api/settings', { method: 'PUT', body: { roles: { planner: cfg } } }); setSettings(s2) }} />
             )}
           </div>
         )}
@@ -667,7 +676,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
             )}
             {tutor && catalog && !chat?.codex && (
               <ModelPicker compact catalog={catalog} value={tutor} align="right"
-                onChange={async (cfg) => { const s = await api('/api/settings', { method: 'PUT', body: { ...settings, roles: { ...settings.roles, tutor: cfg } } }); setSettings(s) }} />
+                onChange={async (cfg) => { const s = await api('/api/settings', { method: 'PUT', body: { roles: { tutor: cfg } } }); setSettings(s) }} />
             )}
           </div>
         )}

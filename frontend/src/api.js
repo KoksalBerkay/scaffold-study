@@ -7,7 +7,7 @@ export async function api(path, { method = 'GET', body } = {}) {
   if (!res.ok) {
     let msg = res.statusText
     try { const j = await res.json(); msg = j.detail || msg } catch (e) { /* ignore */ }
-    throw new Error(msg)
+    throw Object.assign(new Error(msg), { api: true, status: res.status })
   }
   return res.json()
 }
@@ -68,11 +68,12 @@ export async function upload(file) {
  */
 export async function follow(url, onEvent, { signal } = {}) {
   let after = 0
+  let job = '' // which job the index belongs to
   let failures = 0
   let error = null
   while (!signal?.aborted) {
     try {
-      const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}after=${after}`, { signal })
+      const res = await fetch(`${url}${url.includes('?') ? '&' : '?'}after=${after}&job=${job}`, { signal })
       if (!res.ok || !res.body) throw new Error(`status ${res.status}`)
       failures = 0
       const reader = res.body.getReader()
@@ -88,7 +89,14 @@ export async function follow(url, onEvent, { signal } = {}) {
           buf = buf.slice(i + 2)
           const idLine = chunk.split('\n').find((l) => l.startsWith('id: '))
           const line = chunk.split('\n').find((l) => l.startsWith('data: '))
-          if (idLine) after = Number(idLine.slice(4))
+          if (idLine) {
+            const [tag, id] = idLine.slice(4).split(':')
+            // a different job (a new one started while we were disconnected) is replayed from the start:
+            // tell the caller, so it drops what it showed for the old job
+            if (job && tag !== job) { error = null; onEvent({ type: 'restart' }) }
+            job = tag
+            after = Number(id)
+          }
           if (!line) continue
           const ev = JSON.parse(line.slice(6))
           if (ev.type === 'idle') return { ok: false, idle: true, error }

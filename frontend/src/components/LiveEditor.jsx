@@ -4,7 +4,7 @@
  * The file text is never rewritten: what you type is exactly what is saved.
  */
 import { useEffect, useRef } from 'react'
-import { EditorState, StateField } from '@codemirror/state'
+import { Annotation, EditorState, StateField } from '@codemirror/state'
 import { Decoration, EditorView, WidgetType, keymap, drawSelection, placeholder as phExt } from '@codemirror/view'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { languages } from '@codemirror/language-data'
@@ -19,6 +19,7 @@ import katex from 'katex'
 import 'katex/dist/katex.min.css'
 
 /* ---------------- helpers ---------------- */
+const external = Annotation.define() // a change that came from outside (the file was rewritten), not from typing
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 
 function renderMath(src, display) {
@@ -413,7 +414,7 @@ export default function LiveEditor({ value, onChange, onWikiLink, placeholder })
           keymap.of([indentWithTab, ...defaultKeymap, ...historyKeymap]),
           theme,
           phExt(placeholder || 'Start writing…'),
-          EditorView.updateListener.of((u) => { if (u.docChanged) cb.current.onChange?.(u.state.doc.toString()) }),
+          EditorView.updateListener.of((u) => { if (u.docChanged && !u.transactions.some((t) => t.annotation(external))) cb.current.onChange?.(u.state.doc.toString()) }),
           EditorView.domEventHandlers({
             mousedown(e) {
               const wl = e.target.closest?.('.lp-wikilink')
@@ -432,7 +433,7 @@ export default function LiveEditor({ value, onChange, onWikiLink, placeholder })
   useEffect(() => {
     const v = view.current
     if (v && value != null && value !== v.state.doc.toString()) {
-      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value } })
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: value }, annotations: external.of(true) })
     }
   }, [value])
 

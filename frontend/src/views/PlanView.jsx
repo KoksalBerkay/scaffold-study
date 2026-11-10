@@ -242,6 +242,9 @@ export default function PlanView({ onStudy }) {
     }
   }
   const hasPlanRef = useRef(false)
+  // stop following the planner job when this page closes (it keeps running on the server)
+  const aborter = useRef(null)
+  useEffect(() => { const ac = new AbortController(); aborter.current = ac; return () => ac.abort() }, [])
   useEffect(() => {
     const refresh = () => { if (hasPlanRef.current) load() } // live refresh of an existing plan; never yank the user out of the planning chat
     const open = () => load()
@@ -262,12 +265,15 @@ export default function PlanView({ onStudy }) {
     setMode('generating')
     setJob((j) => j || { steps, current: 0, elapsed: 0, detail: '' })
     setBusy(true)
+    const signal = aborter.current?.signal
     const res = await follow('/api/planner/events', (ev) => {
+      if (ev.type === 'restart') return setJob((j) => ({ ...j, current: 0, elapsed: 0, detail: '' }))
       if (ev.type === 'reconnecting') return setJob((j) => ({ ...j, detail: 'Connection dropped. Reconnecting; the planner keeps working on the server…' }))
       if (ev.type === 'status') setJob((j) => ({ ...j, current: ev.stage === 'scan' ? 0 : 1, elapsed: ev.elapsed, detail: ev.detail }))
       if (ev.type === 'done') setJob((j) => ({ ...j, current: j.steps.length }))
-    })
+    }, { signal })
     setBusy(false)
+    if (signal?.aborted) return
     const st = await load()
     if (res.ok) {
       setTab('Quick Plan'); setMode('view')

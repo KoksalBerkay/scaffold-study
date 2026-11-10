@@ -15,6 +15,12 @@ export function ToastProvider({ children }) {
     if (toast.timeout) setTimeout(() => setToasts((ts) => ts.filter((x) => x.id !== id)), toast.timeout)
   }, [])
   const close = (id) => setToasts((ts) => ts.filter((x) => x.id !== id))
+  // a failed request nobody handled (a click that could not be carried out) must not fail silently
+  useEffect(() => {
+    const h = (e) => { if (e.reason?.api) push({ kind: 'error', text: e.reason.message || 'That did not work. Try again.' }) }
+    window.addEventListener('unhandledrejection', h)
+    return () => window.removeEventListener('unhandledrejection', h)
+  }, [push])
   return (
     <ToastCtx.Provider value={push}>
       {children}

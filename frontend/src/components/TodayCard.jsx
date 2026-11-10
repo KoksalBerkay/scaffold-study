@@ -75,6 +75,9 @@ export default function TodayCard({ quickPlan, onSend }) {
   const days = useMemo(() => parseDays(quickPlan), [quickPlan])
   const todayIso = iso(new Date())
   const today = days.find((d) => d.date === todayIso)
+  // marks belong to the task's own line (plus a count for identical lines), not its position: a plan refresh can reorder tasks
+  const seen = {}
+  const keys = (today?.tasks || []).map((t) => { seen[t.raw] = (seen[t.raw] || 0) + 1; return `${t.raw}#${seen[t.raw]}` })
   const missed = days.filter((d) => d.date < todayIso && d.tasks.some((t) => !t.done))
   const next = days.find((d) => d.date > todayIso && d.tasks.length)
   const [state, setStateMap] = useState({})
@@ -86,14 +89,14 @@ export default function TodayCard({ quickPlan, onSend }) {
     const lines = []
     const label = today ? today.label : nice(new Date())
     ;(today?.tasks || []).forEach((t, i) => {
-      const s = state[i]
+      const s = state[keys[i]]
       if (!s?.status) return
       if (s.status === 'done') lines.push(`- Done: ${t.head}${t.mins ? ` (took about the planned ~${t.mins} min)` : ''}`)
       if (s.status === 'time') lines.push(`- ${s.minutes ? 'Done' : 'Worked on'}: ${t.head}, it took ${s.minutes || '?'} min${t.mins ? ` (planned ~${t.mins} min)` : ''}`)
       if (s.status === 'skip') lines.push(`- Skipped: ${t.head}`)
     })
     const msg = `Check-in for ${label}:\n${lines.join('\n')}${note.trim() ? `\n\n${note.trim()}` : ''}\n\nPlease update my plan.`
-    const ticks = (today?.tasks || []).map((t, i) => ({ t, s: state[i] })).filter(({ s }) => s?.status === 'done' || (s?.status === 'time' && s.minutes))
+    const ticks = (today?.tasks || []).map((t, i) => ({ t, s: state[keys[i]] })).filter(({ s }) => s?.status === 'done' || (s?.status === 'time' && s.minutes))
     onSend(msg, ticks.map(({ t }) => t.raw))
     setStateMap({}); setNote('')
   }
@@ -125,7 +128,7 @@ export default function TodayCard({ quickPlan, onSend }) {
         <>
           <p className="muted small">Mark each task, then send it. The planner updates your schedule and its time estimates.</p>
           <div className="today-tasks">
-            {today.tasks.map((t, i) => <TaskRow key={i} t={t} state={state[i]} setState={setFor(i)} />)}
+            {today.tasks.map((t, i) => <TaskRow key={keys[i]} t={t} state={state[keys[i]]} setState={setFor(keys[i])} />)}
           </div>
           <div className="today-foot">
             <input className="grow" placeholder="Anything else? e.g. “Q4 was really hard”, “I'm busy Thursday”" value={note} onChange={(e) => setNote(e.target.value)} />

@@ -8,11 +8,12 @@ const ROLE_INFO = {
   planner: { label: 'Planner', hint: 'Builds and updates your study plan. Benefits from strong reasoning.' },
   tutor: { label: 'Tutor', hint: 'Teaches you. Needs vision for screenshots.' },
   reviewer: { label: 'Reviewer', hint: 'Checks every tutor reply before you see it.' },
+  notes: { label: 'Notes', hint: "Each course's Notes agent: writes and edits your notes." },
   background: { label: 'Background', hint: 'Notes, memory and chat summaries. A faster model is fine.' },
 }
 const PROMPT_INFO = {
   planner_chat: 'Planner conversation', planner: 'Study planner', plan_updater: 'Plan updater', tutor: 'Tutor', reviewer: 'Reviewer',
-  notetaker: 'Note-taker', memory_updater: 'Memory updater', summary: 'Chat summary', math: 'Math formatting (shared)',
+  notetaker: 'Note-taker', notes_agent: 'Notes agent', notes_reviewer: 'Notes reviewer', memory_updater: 'Memory updater', summary: 'Chat summary', math: 'Math formatting (shared)',
 }
 const SECTIONS = [
   { id: 'models', label: 'Models', icon: Cpu },
@@ -49,11 +50,13 @@ function Models({ settings, setSettings, save }) {
   }
   const test = async (role) => {
     setTesting((t) => ({ ...t, [role]: 'run' }))
-    const r = await api('/api/models/test', { method: 'POST', body: { role } })
-    setTesting((t) => ({ ...t, [role]: r.ok ? 'ok' : r.reply }))
+    try {
+      const r = await api('/api/models/test', { method: 'POST', body: { role } })
+      setTesting((t) => ({ ...t, [role]: r.ok ? 'ok' : r.reply }))
+    } catch (e) { setTesting((t) => ({ ...t, [role]: e.message || 'The test could not run.' })) }
   }
   const saveKey = async (p) => {
-    await save({ providers: { ...settings.providers, [p]: { api_key: keys[p] } } })
+    await save({ providers: { [p]: { api_key: keys[p] } } })
     setKeys((k) => ({ ...k, [p]: '' }))
     await loadCatalog()
     toast({ kind: 'success', text: 'API key saved on this computer. Its models are now in the list.' })
@@ -177,8 +180,12 @@ function Memory() {
   useEffect(() => { api('/api/memory/courses').then(setCourses).catch(() => {}) }, [])
   useEffect(() => {
     setContent(null)
-    api(`/api/memory${scope ? `?course=${encodeURIComponent(scope)}` : ''}`).then((r) => { setContent(r.content); setOrig(r.content) })
-  }, [scope])
+    let live = true // a slower answer for the previous course must not land here (and be saved into this course)
+    api(`/api/memory${scope ? `?course=${encodeURIComponent(scope)}` : ''}`)
+      .then((r) => { if (live) { setContent(r.content); setOrig(r.content) } })
+      .catch((e) => { if (live) toast({ kind: 'error', text: `Could not load the memory: ${e.message}` }) })
+    return () => { live = false }
+  }, [scope]) // eslint-disable-line
   const dirty = content != null && content !== orig
   const pick = (c) => { if (dirty && !window.confirm('Discard unsaved changes?')) return; setScope(c) }
   const save = async () => {
@@ -338,7 +345,7 @@ export default function SettingsView({ section, onSaved }) {
   const sec = section || 'models'
   useEffect(() => { apiRetry('/api/settings').then(setSettings).catch(() => {}) }, [])
   const save = async (patch) => {
-    const s = await api('/api/settings', { method: 'PUT', body: { ...settings, ...patch } })
+    const s = await api('/api/settings', { method: 'PUT', body: patch }) // only what changed: another window's newer settings are not undone
     setSettings(s); onSaved?.(s)
   }
   if (!settings) return <div className="center muted">Loading…</div>
