@@ -180,6 +180,13 @@ def _all_images(messages: list[dict], limit: int = 8) -> list[str]:
     return imgs[-limit:]
 
 
+def _kill(proc):
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass  # it exited on its own just now
+
+
 async def _run(args: list[str], stdin: str, cwd: str | None = None) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(
         *args, cwd=cwd,
@@ -188,10 +195,10 @@ async def _run(args: list[str], stdin: str, cwd: str | None = None) -> tuple[int
     try:
         out, err = await asyncio.wait_for(proc.communicate(stdin.encode()), timeout=TIMEOUT)
     except asyncio.TimeoutError:
-        proc.kill()
+        _kill(proc)
         raise LLMError("The model took too long and was stopped.")
     except asyncio.CancelledError:
-        proc.kill()
+        _kill(proc)
         raise
     return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
 
@@ -206,9 +213,10 @@ def friendly_error(provider: str, raw: str, model: str = "") -> str:
              "anthropic": "your Anthropic key"}.get(provider, provider)
     if "model_not_found" in low or ("model" in low and "not supported" in low) or "does not exist" in low:
         return f"The model “{model or '?'}” isn't available with {where}. Pick another one in Settings → Models."
-    if "usage limit" in low or "rate limit" in low or "429" in low or "quota" in low:
+    # status codes as whole numbers only: the raw dump contains ids and token counts ("thread_id": "…-4016-…")
+    if "usage limit" in low or "rate limit" in low or _re.search(r"\b429\b", low) or "quota" in low:
         return f"You've hit the usage limit of {where}. Wait a bit, or switch to another provider in Settings → Models."
-    if "not logged in" in low or "login" in low and "codex" in low or "unauthorized" in low or "401" in low:
+    if "not logged in" in low or "login" in low and "codex" in low or "unauthorized" in low or _re.search(r"\b401\b", low):
         return f"Scaffold isn't signed in to {where}. Sign in again (for ChatGPT: run `codex login`)."
     if "network" in low or "connection" in low or "timed out" in low or "dns" in low:
         return "Couldn't reach the AI service. Check your internet connection and try again."
@@ -274,7 +282,9 @@ async def _codex(cfg: dict, system: str, messages: list[dict]) -> str:
                               "cached_input_tokens": usage.get("cachedInputTokens", 0),
                               "output_tokens": usage.get("outputTokens", 0)})
             return text
-        except (PoolError, asyncio.TimeoutError, KeyError, OSError) as e:
+        except asyncio.TimeoutError:
+            raise LLMError("The model took too long and was stopped.")  # a second full-length try would not help
+        except (PoolError, KeyError, OSError) as e:
             # the pool is an optimisation only: fall back to a plain one-off call
             (WORKSPACE / "logs").mkdir(parents=True, exist_ok=True)
             with open(WORKSPACE / "logs" / "codex-pool.log", "a") as f:

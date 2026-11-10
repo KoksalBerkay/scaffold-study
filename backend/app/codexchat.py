@@ -30,6 +30,7 @@ STEER_HEADER = ("[Scaffold] The student stopped your previous answer to add the 
 REVIEW_HEADER = ("[Scaffold Reviewer] The student has not seen your last reply yet. Rewrite it and fix these points. "
                  "Reply with the complete corrected message for the student only, without mentioning this review. "
                  "Do not write or edit any note files (Scaffold's Notes agent does that):\n")
+_background: set[asyncio.Task] = set()
 
 
 def display_messages(cid: str, meta: dict) -> list[dict]:
@@ -149,8 +150,9 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
         else:
             yield ev
     meta = load_meta(cid)
-    meta["codex"]["memory_hash"] = mem_hash
-    save_meta(meta)
+    if meta.get("codex"):  # the chat may have been unlinked while Codex was answering: keep the answer anyway
+        meta["codex"]["memory_hash"] = mem_hash
+        save_meta(meta)
     yield act("draft", f"Codex answered ({len(draft.split())} words)")
 
     review = {"enabled": bool(settings.get("review")) and not planner, "rounds": [], "student_note": ""}
@@ -180,7 +182,9 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
     if planner:
         broadcast({"type": "plan"})
     else:
-        asyncio.create_task(chat.background(cid, user_msg, asst))
+        task = asyncio.create_task(chat.background(cid, user_msg, asst))
+        _background.add(task)  # the event loop keeps only a weak reference to a task
+        task.add_done_callback(_background.discard)
 
 
 # ---------------- linking ----------------

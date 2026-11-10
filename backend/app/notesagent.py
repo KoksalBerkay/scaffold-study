@@ -34,6 +34,14 @@ RULE_RE = re.compile(r"<<<RULE\s+(.*?)\s*RULE>>>", re.S)
 RENAME_RE = re.compile(r"<<<RENAME\s+(.+?)\s*->\s*(.+?)\s*RENAME>>>", re.S)
 SUMMARY_RE = re.compile(r"^SUMMARY:\s*(.+)$", re.M)
 _locks: dict[str, asyncio.Lock] = {}
+_tasks: set[asyncio.Task] = set()
+
+
+def _spawn(coro):
+    """Run in the background, keeping a reference (the event loop holds only a weak one)."""
+    task = asyncio.create_task(coro)
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
 
 
 # ---------------- where a course's notes live ----------------
@@ -264,9 +272,23 @@ def _cards_path(cid: str) -> Path:
     return chat_dir(cid) / "notes_log.json"
 
 
+_BOOT = time.time()
+
+
 def load_cards(cid: str) -> list[dict]:
-    data = read_json(_cards_path(cid), [])
-    return data if isinstance(data, list) else []
+    p = _cards_path(cid)
+    data = read_json(p, [])
+    if not isinstance(data, list):
+        return []
+    try:
+        stale = p.stat().st_mtime < _BOOT
+    except OSError:
+        stale = False
+    if stale:  # last written before this server started: nothing is working on these cards any more
+        for c in data:
+            if isinstance(c, dict) and c.get("status") in ("working", "reviewing", "fixing"):
+                c.update(status="error", summary="Scaffold was restarted while the Notes agent was working. Ask again.")
+    return data
 
 
 def _save_card(cid: str, card: dict):
@@ -348,6 +370,36 @@ def _shrunk(changes: list[dict]) -> list[dict]:
             and len(c["new"]) < 0.9 * len(c["old"])]
 
 
+def _changed_on_disk(changes: list[dict]) -> set[str]:
+    """Paths whose note no longer has the text these changes were planned on."""
+    out = set()
+    for c in changes:
+        if c["new"] is None:
+            continue
+        try:
+            p = note_target(c["path"])
+            now = p.read_text() if p.exists() else ""
+        except (ValueError, OSError):
+            continue
+        if now != c["old"]:
+            out.add(c["path"])
+    return out
+
+
+def _replan(out: str, folder: str) -> list[dict]:
+    """The same reply applied to the notes as they are now (section edits land in the current text)."""
+    changes, _, _ = plan_changes(out, folder)
+    return [c for c in changes if c not in _shrunk(changes)]
+
+
+def _conflicts(planned: list[dict], fresh: list[dict], moved: set[str]) -> list[str]:
+    """Edited notes where re-applying is not safe: a full rewrite, or a section the student also edited."""
+    before = {c["path"]: [s["old"] for s in c["sections"]] for c in planned}
+    return [c["path"] for c in fresh if c["path"] in moved and c["new"] is not None
+            and (c["action"] in ("rewrote", "renamed") or not c["sections"] or [s["old"] for s in c["sections"]] != before.get(c["path"])
+                 )]
+
+
 def _read_note_tool(args: dict) -> str:
     text = note_target(args["path"].removeprefix("notes/")).read_text()
     want = (args.get("heading") or "").strip().lstrip("#").strip().lower()
@@ -413,6 +465,7 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
     settings = load_settings()
     out = await _agent_turn(course, folder, message, images, context_files)
     changes, rules, summary = plan_changes(out, folder)
+    src = out  # the reply `changes` was planned from
     shrunk = _shrunk(changes)
     if shrunk:
         # a full rewrite that makes an existing note shorter probably dropped content: never save it as is
@@ -423,6 +476,7 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
                                 + ". Keep every existing line. Use SECTION edits for what changed, and output your edits again.",
                                 [], [c["path"] for c in shrunk])
         changes, rules2, summary2 = plan_changes(out, folder)
+        src = out
         rules, summary = rules + rules2, summary2 or summary
         changes = [c for c in changes if c not in _shrunk(changes)]  # still shrinking: drop it rather than lose text
     if changes and settings.get("review_notes", True):
@@ -439,8 +493,26 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
                                     "(output the full corrected edits again):\n" + fb, [], [c["path"] for c in changes])
             changes2, rules2, summary2 = plan_changes(out, folder)
             if changes2:
-                changes, summary = changes2, summary2 or summary
+                changes, summary, src = changes2, summary2 or summary, out
             rules += rules2
+    moved = _changed_on_disk(changes)
+    if moved:
+        # the student edited a note while the agent was working: never write the old text back over their edit
+        fresh = _replan(src, folder)
+        conflict = _conflicts(changes, fresh, moved)
+        if conflict:
+            card.update(status="fixing")
+            _save_card(cid, card)
+            out = await _agent_turn(course, folder, "NOT SAVED: the student edited these notes while you were working: "
+                                    + ", ".join(f"notes/{p}" for p in conflict) + ". Their current content is below. Keep the "
+                                    "student's edits and output your edits for these files again, based on the current content.",
+                                    [], conflict)
+            redo, rules2, summary2 = plan_changes(out, folder)  # planned and written without a pause: nothing can change in between
+            redo = [c for c in redo if c not in _shrunk(redo)]
+            rules, summary = rules + rules2, summary2 or summary
+            done = {c["path"] for c in redo}
+            fresh = [c for c in _replan(src, folder) if c["path"] not in done and c["path"] not in conflict] + redo
+        changes = fresh
     written = []
     for c in sorted(changes, key=lambda c: c["new"] is None):  # write the new name before removing the old one
         if c["new"] is None:
@@ -465,7 +537,7 @@ async def _process(cid: str, card: dict, course: str, folder: str, message: str,
         broadcast({"type": "notes", "paths": [w["path"] for w in written], "chat": cid})
     if rules:
         broadcast({"type": "memory", "summary": f"{course}: notes rule saved", "chat": cid})
-    asyncio.create_task(_refresh_summary(course))
+    _spawn(_refresh_summary(course))
 
 
 async def after_answer(cid: str, user_msg: dict, asst: dict):
@@ -525,7 +597,7 @@ async def notes_feedback(cid: str, card_id: str, body: dict = Body(...)):
         except Exception as e:
             card.update(status="error", summary=str(e)[:300])
             _save_card(cid, card)
-    asyncio.create_task(run())
+    _spawn(run())
     return card
 
 
@@ -554,7 +626,7 @@ async def direct_request(cid: str, text: str) -> dict:
         except Exception as e:
             card.update(status="error", summary=str(e)[:300])
             _save_card(cid, card)
-    asyncio.create_task(run())
+    _spawn(run())
     return card
 
 

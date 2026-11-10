@@ -57,8 +57,14 @@ class CodexPool:
                 stderr=asyncio.subprocess.DEVNULL, limit=64 * 1024 * 1024)
             self.pending.clear()
             self.reader = asyncio.create_task(self._read())
-            await self._request("initialize", {"clientInfo": {"name": "scaffold", "version": "1.0"}}, timeout=30)
-            await self._send({"method": "initialized"})
+            try:
+                await self._request("initialize", {"clientInfo": {"name": "scaffold", "version": "1.0"}}, timeout=30)
+                await self._send({"method": "initialized"})
+            except BaseException:
+                # never keep a server that did not finish starting: the next job starts a fresh one
+                if self.proc.returncode is None:
+                    self.proc.kill()
+                raise
             await self._archive_strays()
             if not self.loaded:
                 data = read_json(POOL_FILE, {}) or {}
@@ -162,6 +168,7 @@ class CodexPool:
         q: asyncio.Queue = asyncio.Queue()
         self.thread_events[tid] = q
         turn_id = None
+        turn_over = False
         ok = False
         try:
             if not fresh:
@@ -179,6 +186,8 @@ class CodexPool:
             final, usage, failure = "", None, ""
             deadline = time.time() + timeout
             while True:
+                if time.time() >= deadline:  # checked here too: a steady stream of events must not postpone it forever
+                    raise asyncio.TimeoutError()
                 msg = await asyncio.wait_for(q.get(), max(1, deadline - time.time()))
                 m = msg.get("method", "")
                 p = msg.get("params") or {}
@@ -194,12 +203,24 @@ class CodexPool:
                     turn = p.get("turn") or {}
                     if turn.get("status") not in (None, "completed"):
                         failure = failure or json.dumps(turn.get("error") or turn)[:500]
+                    turn_over = True
                     break
             if failure and not final:
                 raise PoolError(failure)
             ok = True
             return final, usage
         finally:
+            try:
+                if turn_id and not turn_over:
+                    # stopped or timed out: tell Codex to stop too, or the turn keeps running (and costing) unseen
+                    await self._request("turn/interrupt", {"threadId": tid, "turnId": turn_id}, timeout=10)
+                    end = time.time() + 10
+                    while time.time() < end:
+                        msg = await asyncio.wait_for(q.get(), max(0.1, end - time.time()))
+                        if msg.get("method") in ("turn/completed", "__closed__"):
+                            break
+            except Exception:
+                pass
             self.thread_events.pop(tid, None)
             try:
                 if turn_id:

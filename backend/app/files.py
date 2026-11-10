@@ -23,10 +23,13 @@ def parse_file_blocks(text: str) -> list[tuple[str, str]]:
 
 
 def normalize_math(text: str) -> str:
-    """Convert \\( \\) and \\[ \\] delimiters to $ / $$ (Obsidian + KaTeX syntax)."""
-    text = re.sub(r"\\\[(.+?)\\\]", lambda m: "\n$$\n" + m.group(1).strip() + "\n$$\n", text, flags=re.S)
-    text = re.sub(r"\\\((.+?)\\\)", lambda m: "$" + m.group(1).strip() + "$", text, flags=re.S)
-    return text
+    """Convert \\( \\) and \\[ \\] delimiters to $ / $$ (Obsidian + KaTeX syntax). Code is left alone: in a regex
+    or a shell line, \\( and \\[ are code, not math."""
+    parts = re.split(r"(```.*?```|`[^`\n]*`)", text, flags=re.S)
+    for i in range(0, len(parts), 2):
+        t = re.sub(r"\\\[(.+?)\\\]", lambda m: "\n$$\n" + m.group(1).strip() + "\n$$\n", parts[i], flags=re.S)
+        parts[i] = re.sub(r"\\\((.+?)\\\)", lambda m: "$" + m.group(1).strip() + "$", t, flags=re.S)
+    return "".join(parts)
 
 
 def note_target(rel: str) -> Path:

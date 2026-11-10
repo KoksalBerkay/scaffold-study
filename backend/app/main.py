@@ -9,6 +9,7 @@ from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from . import llm, materials, planner
 from .config import (PROMPT_NAMES, ROOT, WORKSPACE, course_memory_path, default_prompt, get_course_memory,
@@ -17,6 +18,21 @@ from .config import (PROMPT_NAMES, ROOT, WORKSPACE, course_memory_path, default_
 from .files import note_target, notes_tree
 
 app = FastAPI(title="Scaffold")
+# only requests addressed to this computer: a web page that rebinds its own domain to 127.0.0.1 is refused
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+
+
+@app.middleware("http")
+async def same_origin_only(request: Request, call_next):
+    """Another website open in the browser must not change anything here (stop an answer, upload, delete).
+    Browsers send Origin on such requests; scripts and curl send none and are allowed."""
+    origin = request.headers.get("origin")
+    if origin and request.method not in ("GET", "HEAD", "OPTIONS"):
+        from urllib.parse import urlsplit
+        if urlsplit(origin).hostname not in ("127.0.0.1", "localhost"):
+            from fastapi.responses import JSONResponse
+            return JSONResponse({"detail": "This request came from another website."}, status_code=403)
+    return await call_next(request)
 
 
 @app.exception_handler(ValueError)
@@ -63,6 +79,11 @@ def put_settings(body: dict = Body(...)):
         if new is None or "…" in new or new == "•••":
             body.setdefault("providers", {}).setdefault(p, {})["api_key"] = cur["providers"][p].get("api_key", "")
     body.pop("notes_path_effective", None)
+    # a save may carry only what changed: merge it into the current settings instead of replacing whole groups
+    if isinstance(body.get("roles"), dict):
+        body["roles"] = {**cur["roles"], **body["roles"]}
+    body["providers"] = {p: {**v, **(body["providers"].get(p) or {})} if isinstance(v, dict) else body["providers"].get(p, v)
+                         for p, v in {**body["providers"], **cur["providers"]}.items()}
     save_settings({**cur, **body})
     return get_settings()
 
@@ -109,6 +130,8 @@ def put_prompt(name: str, body: dict = Body(...)):
 
 @app.delete("/api/prompts/{name}")
 def reset_prompt(name: str):
+    if name not in PROMPT_NAMES:
+        raise HTTPException(404)
     p = prompt_path(name)
     if p.exists():
         p.unlink()
@@ -179,12 +202,15 @@ def scan(body: dict = Body(...)):
 
 @app.get("/api/materials/raw")
 def raw_material(path: str):
-    root = Path(load_settings().get("materials_path") or "/").expanduser()
+    mp = load_settings().get("materials_path")
+    if not mp:  # no materials folder chosen: there is nothing to serve (never fall back to the whole disk)
+        raise HTTPException(404)
+    root = Path(mp).expanduser()
     try:
         p = materials.safe_path(root, path)
     except ValueError:
         raise HTTPException(403, "Outside the materials folder")
-    if not p.exists():
+    if not p.is_file():
         raise HTTPException(404)
     return FileResponse(p)
 
@@ -203,6 +229,10 @@ def _start_planner(make):
     from . import jobs
     if jobs.running("planner"):
         raise HTTPException(409, "The planner is already working. Wait for it to finish.")
+    from .chat import load_meta
+    for key in jobs.any_running():  # the plan chat writes the same plan files
+        if key.startswith("chat:") and load_meta(key[5:]).get("kind") == "planner":
+            raise HTTPException(409, "The plan chat is still answering. Wait for it to finish.")
     jobs.start("planner", make)
     return {"ok": True}
 
@@ -222,9 +252,9 @@ async def planner_log(body: dict = Body(...)):
 
 
 @app.get("/api/planner/events")
-async def planner_events(after: int = 0):
+async def planner_events(after: int = 0, job: str = ""):
     from . import jobs
-    return StreamingResponse(jobs.follow("planner", after), media_type="text/event-stream",
+    return StreamingResponse(jobs.follow("planner", after, job), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -262,8 +292,7 @@ def note_read(path: str):
 @app.put("/api/notes/file")
 def note_write(body: dict = Body(...)):
     p = note_target(body["path"])
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(body["content"])
+    write_atomic(p, body["content"])  # the Notes agent may read this note at the same moment
     return {"ok": True}
 
 
@@ -294,8 +323,8 @@ def spa(full_path: str):
     from fastapi.responses import HTMLResponse
     if full_path.startswith("api/"):
         raise HTTPException(404, "Unknown API route")
-    f = DIST / full_path
-    if full_path and f.is_file() and f.name != "index.html":
+    f = (DIST / full_path).resolve()
+    if full_path and DIST.resolve() in f.parents and f.is_file() and f.name != "index.html":
         return FileResponse(f)
     index = DIST / "index.html"
     if not index.is_file():  # mid-build or not built yet: never show an error page that can't recover

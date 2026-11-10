@@ -244,7 +244,14 @@ async def run_turn_via_queue(info: dict, prompt: str, images: list[str], model: 
     if imgs:
         args += ["-i", *imgs]
     proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-    out, err = await asyncio.wait_for(proc.communicate(), 120)
+    try:
+        out, err = await asyncio.wait_for(proc.communicate(), 120)
+    except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+        if proc.returncode is None:
+            proc.kill()
+        if isinstance(e, asyncio.TimeoutError):
+            raise LLMError("This chat is open in the Codex app and did not take the message. Close it there and try again.")
+        raise
     if proc.returncode != 0:
         raise LLMError("This chat is open in the Codex app and could not take the message. Close it there and try again. "
                        + (err or out).decode(errors="replace")[-200:])

@@ -260,7 +260,7 @@ def read_pages(path: Path, pages: str | None, max_chars: int = 12000) -> str:
         for part in str(pages).split(","):
             if "-" in part:
                 a, b = part.split("-", 1)
-                idx += list(range(int(a) - 1, int(b)))
+                idx += list(range(max(0, int(a) - 1), min(int(b), len(all_pages))))  # "1-999999999" must not build a huge list
             elif part.strip():
                 idx.append(int(part) - 1)
     out = []

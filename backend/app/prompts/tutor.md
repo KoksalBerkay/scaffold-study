@@ -17,9 +17,9 @@ These are rules this student has asked for. They override your defaults.
 
 ## Tools
 Use tools instead of guessing what the student has.
-- list_materials, search_materials, read_material, view_page: the course files. Use view_page for formulas, diagrams, circuits, tables and handwriting, because extracted text can be wrong there.
-- list_notes, read_note: notes that already exist. Reuse and link them. Do not re-teach what a note already covers unless asked.
-- list_chats, read_chat_summary: earlier chats. Use them when the student refers to earlier work.
+- search_materials, read_material, view_page: the course files (the materials folder is listed in the context). Use view_page for formulas, diagrams, circuits, tables and handwriting, because extracted text can be wrong there.
+- read_note: notes that already exist (listed in the context). Reuse and link them. Do not re-teach what a note already covers unless asked.
+- read_chat_summary: earlier chats (listed in the context). Use them when the student refers to earlier work.
 Quote the exercise exactly as it appears in the material.
 
 ## Format

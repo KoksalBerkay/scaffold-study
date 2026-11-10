@@ -319,7 +319,9 @@ def rename_chat(cid: str, body: dict = Body(...)):
 
 
 @router.delete("/api/chats/{cid}")
-def delete_chat(cid: str):
+async def delete_chat(cid: str):  # async: cancelling the job must happen on the event loop
+    from . import jobs
+    jobs.cancel(f"chat:{cid}")  # do not let the model keep answering a chat that is gone
     d = chat_dir(cid)
     if d.exists():
         shutil.rmtree(d)
@@ -468,7 +470,7 @@ def build_context(meta: dict, user_text: str) -> tuple[str, str, list[str], list
         parts.append(f"## This chat was started from a study-plan task\n{meta['task']}")
     for link in meta.get("pinned_files") or []:
         rel = _rel(root, link)
-        if rel:
+        if rel and (root / rel).is_file():  # a pinned file that was moved or deleted must not break every answer
             text = materials.read_pages(root / rel, None, max_chars=12000)
             if not materials.has_text(root / rel):
                 # scanned PDF: give the tutor the first pages as images instead of empty text
@@ -598,8 +600,13 @@ def history_for_model(cid: str, messages: list[dict], info: dict | None = None) 
     return prefix + out
 
 
-_ESC = re.compile(r"\\\\|\\(?=[A-Za-z]{2,})|\\(?![\"\\/bfnrtu])")
-_LATEX_LIKE = re.compile(r"\\\\|\\(?=(?:[bfrt][A-Za-z])|[A-Za-z]{2,})|\\(?![\"\\/bfnrtu])")
+# "\n" before letters is a line break ("\nNext step") unless a LaTeX command starts there ("\nabla", "\neq", "\nu")
+_N_LATEX = (r"n(?:u|e|i|abla|eq|eg|ot|otin|mid|leq|geq|less|gtr|sim|cong|exists|parallel|subseteq|supseteq|vdash|vDash|atural"
+            r"|earrow|warrow|rightarrow|leftarrow|Rightarrow|Leftarrow|triangleleft|triangleright|olimits|onumber|ewline"
+            r"|ewcommand|ormalsize|oindent)(?![A-Za-z])")
+_WORD = r"(?=[A-Za-z]{2,})(?!n(?!" + _N_LATEX[1:] + "))"
+_ESC = re.compile(r"\\\\|\\" + _WORD + r"|\\(?![\"\\/bfnrtu])")
+_LATEX_LIKE = re.compile(r"\\\\|\\(?=[bfrt][A-Za-z])|\\" + _WORD + r"|\\(?![\"\\/bfnrtu])")
 
 
 def _strings(o):
@@ -684,16 +691,26 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
         yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
         rin = review_input(user_msg, prior, material_used, draft, review["rounds"])
         verdict = None
-        async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
-                                       "reviewing", "Correct? Complete? Not giving the answer away?"):
-            if isinstance(ev, tuple):
-                verdict = parse_json(ev[1])
-            else:
-                yield ev
-        if verdict is None:
-            yield act("review", "Reviewer's reply could not be read; asking again")
-            again = await llm.complete("reviewer", rsys, [{"role": "user", "content": rin + "\n\nReply with valid JSON only. Escape every backslash in strings as \\\\."}])
-            verdict = parse_json(again)
+        try:
+            async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),
+                                           "reviewing", "Correct? Complete? Not giving the answer away?"):
+                if isinstance(ev, tuple):
+                    verdict = parse_json(ev[1])
+                else:
+                    yield ev
+            if verdict is None:
+                yield act("review", "Reviewer's reply could not be read; asking again")
+                again = await llm.complete("reviewer", rsys, [{"role": "user", "content": rin + "\n\nReply with valid JSON only. Escape every backslash in strings as \\\\.",
+                                                               "images": images}])
+                verdict = parse_json(again)
+        except llm.LLMError as e:
+            # the reviewer could not run (usage limit, signed out, network): a finished draft is worth more than an error
+            yield act("issues", f"Reviewer could not run: showing the draft unreviewed ({e})")
+            review["rounds"].append({"verdict": "unavailable", "issues": []})
+            review["final"] = "best_effort"
+            review["student_note"] = ("The reviewer could not run, so this answer is unreviewed." if r == 0 else
+                                      "The reviewer could not check the revised answer, so this version is not fully reviewed.")
+            return
         if verdict is None:
             yield act("issues", "Reviewer's reply could not be read twice: showing the draft unreviewed")
             review["rounds"].append({"verdict": "unreadable", "issues": []})
@@ -715,14 +732,23 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
             break
         fb = "\n".join(f"- [{i.get('type')}] {i.get('where', '')}: {i.get('fix', '')}" for i in issues)
         yield act("revise", f"Tutor is fixing {len(issues)} issue{'s' if len(issues) != 1 else ''}")
-        async for ev in revise(fb, len(issues)):
-            if isinstance(ev, tuple):
-                draft = ev[1] or draft
-                yield ("draft", draft)
-            else:
-                yield ev
+        try:
+            async for ev in revise(fb, len(issues)):
+                if isinstance(ev, tuple):
+                    draft = ev[1] or draft
+                    yield ("draft", draft)
+                else:
+                    yield ev
+        except llm.LLMError as e:
+            yield act("issues", f"The revision could not run: showing the draft as it is ({e})")
+            review["final"] = "best_effort"
+            review["student_note"] = "The reviewer found issues, but the fix could not run, so they are not corrected in this answer."
+            return
     last = review["rounds"][-1]["verdict"] if review["rounds"] else "approve"
     review["final"] = "approved" if last != "revise" else "best_effort"
+
+
+_background_tasks: set = set()
 
 
 async def tutor_turn(cid: str, body: dict, review: bool | None = None, background_jobs: bool = True, retry: bool = False):
@@ -860,7 +886,9 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
     yield {"type": "message", "message": asst}
 
     if background_jobs:
-        asyncio.create_task(background(cid, user_msg, asst))
+        task = asyncio.create_task(background(cid, user_msg, asst))
+        _background_tasks.add(task)  # the event loop keeps only a weak reference to a task
+        task.add_done_callback(_background_tasks.discard)
 
 
 # ---------------- background agents ----------------
@@ -939,13 +967,16 @@ async def summary_job(cid: str, force: bool = False):
         if not force and sum(len(m["content"]) for m in msgs) < 6000:
             return
         meta = load_meta(cid)
-        if not force and read_summary(cid) and len(msgs) - (meta.get("summary_upto") or 0) < 4:
+        upto = meta.get("summary_upto") or 0
+        if not force and read_summary(cid) and len(msgs) - upto < 4:
             return  # refreshed every 4 messages, not after every one
         meta["summary_upto"] = len(msgs)
         save_meta(meta)
         prev = read_summary(cid)
-        recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content']}" for m in msgs[-8:])
-        user = f"PREVIOUS SUMMARY:\n{prev or '(empty)'}\n\nMESSAGES SINCE THEN:\n{recent[:30000]}"
+        # every message the previous summary does not cover yet (all of them for the first summary), at least the last 8
+        since = msgs[min(upto, max(0, len(msgs) - 8)):] if prev else msgs
+        recent = "\n\n".join(f"{'STUDENT' if m['role'] == 'user' else 'TUTOR'}: {m['content']}" for m in since)
+        user = f"PREVIOUS SUMMARY:\n{prev or '(empty)'}\n\nMESSAGES SINCE THEN:\n{recent[-30000:]}"
         out = await llm.complete("background", render_prompt("summary"), [{"role": "user", "content": user}])
         (chat_dir(cid) / "summary.md").write_text(normalize_math(out))
     except Exception:
@@ -990,6 +1021,26 @@ def _turn_for(cid: str, body: dict, retry: bool):
     return lambda: tutor_turn(cid, body, retry=retry)  # noqa: E731
 
 
+def _start_next(cid: str, ok: bool):
+    """After a job in this chat ends: a steering message first, otherwise the next queued message (only after success)."""
+    try:
+        steer = chat_dir(cid) / "steer.json"
+        if steer.exists():
+            nxt = read_json(steer, {}) or {}
+            steer.unlink(missing_ok=True)
+            _start_turn(cid, {**nxt, "steer": True})
+            return
+        if ok:
+            q = load_queue(cid)
+            if q:
+                nxt, rest = q[0], q[1:]
+                _start_turn(cid, {"text": nxt["text"], "attachments": nxt.get("attachments") or []})
+                save_queue(cid, rest)  # only once it started: a refused start keeps the message queued
+    except Exception:
+        import traceback
+        traceback.print_exc()
+
+
 def _start_turn(cid: str, body: dict, retry: bool = False):
     from . import jobs
     key = f"chat:{cid}"
@@ -1004,26 +1055,7 @@ def _start_turn(cid: str, body: dict, retry: bool = False):
             return  # stopped on purpose to take a steering message
         _remember_error(cid, "You stopped this answer." if m == "Stopped." else m)
 
-    def on_done(ok: bool):
-        # what to send next: a steering message first, otherwise the next queued message (only after success)
-        try:
-            steer = chat_dir(cid) / "steer.json"
-            if steer.exists():
-                nxt = read_json(steer, {}) or {}
-                steer.unlink(missing_ok=True)
-                _start_turn(cid, {**nxt, "steer": True})
-                return
-            if ok:
-                q = load_queue(cid)
-                if q:
-                    nxt, rest = q[0], q[1:]
-                    save_queue(cid, rest)
-                    _start_turn(cid, {"text": nxt["text"], "attachments": nxt.get("attachments") or []})
-        except Exception:
-            import traceback
-            traceback.print_exc()
-
-    jobs.start(key, _turn_for(cid, body, retry), on_error=on_error, on_done=on_done)
+    jobs.start(key, _turn_for(cid, body, retry), on_error=on_error, on_done=lambda ok: _start_next(cid, ok))
     broadcast({"type": "turn", "chat": cid})  # every open window follows the answer live
     return {"ok": True}
 
@@ -1126,19 +1158,22 @@ async def run_command(cid: str, body: dict = Body(...)):
     args = (body.get("args") or "").strip()
     key = f"chat:{cid}"
     if name == "stop":
+        (chat_dir(cid) / "steer.json").unlink(missing_ok=True)
         return {"ok": jobs.cancel(key), "message": "Stopped." if jobs.running(key) else "Nothing was running."}
     if name == "compact":
         if jobs.running(key):
             raise HTTPException(409, "Wait for the current answer to finish, then compact.")
-        jobs.start(key, lambda: compact_turn(cid), on_error=lambda m: None)
+        # messages sent while compacting are queued or steer: send them when it ends, like after an answer
+        jobs.start(key, lambda: compact_turn(cid), on_error=lambda m: None, on_done=lambda ok: _start_next(cid, ok))
         broadcast({"type": "turn", "chat": cid})
         return {"ok": True, "started": True}
     if name == "review":
         from .config import save_settings
+        from .main import get_settings  # masks the API keys
         s = load_settings()
         s["review"] = args.lower() not in ("off", "0", "false", "no") if args else not s.get("review")
         save_settings(s)
-        return {"ok": True, "message": f"Reviewer is {'on' if s['review'] else 'off'}.", "settings": s}
+        return {"ok": True, "message": f"Reviewer is {'on' if s['review'] else 'off'}.", "settings": get_settings()}
     if name == "notes":
         if not args:
             raise HTTPException(400, "Say what to put in the notes, e.g. /notes add a summary of today's proofs")
@@ -1157,9 +1192,9 @@ async def retry_message(cid: str):
 
 
 @router.get("/api/chats/{cid}/events")
-async def chat_events(cid: str, after: int = 0):
+async def chat_events(cid: str, after: int = 0, job: str = ""):
     from . import jobs
-    return StreamingResponse(jobs.follow(f"chat:{cid}", after), media_type="text/event-stream",
+    return StreamingResponse(jobs.follow(f"chat:{cid}", after, job), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

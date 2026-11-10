@@ -10,6 +10,7 @@ import asyncio
 import json
 import time
 import traceback
+import uuid
 from typing import AsyncIterator, Callable
 
 from . import llm
@@ -25,6 +26,7 @@ class Job:
         self.ok = False
         self.error: str | None = None
         self.started = time.time()
+        self.tag = uuid.uuid4().hex[:8]  # tells a reconnecting client whether this is still the job it was following
         self.finished: float | None = None
         self.cond = asyncio.Condition()
         self.task: asyncio.Task | None = None
@@ -119,13 +121,15 @@ def start(key: str, make: Callable[[], AsyncIterator[dict]], on_error: Callable[
     return job
 
 
-async def follow(key: str, after: int = 0):
+async def follow(key: str, after: int = 0, tag: str = ""):
     """SSE stream of a job's events after index `after`; ends when the job ends."""
     job = JOBS.get(key)
     if not job:
         yield "data: " + json.dumps({"type": "idle"}) + "\n\n"
         return
     i = max(0, after)
+    if (tag and tag != job.tag) or i > len(job.events):
+        i = 0  # the index is from an earlier job with this key: replay this one from the start
     while True:
         async with job.cond:
             try:
@@ -139,6 +143,6 @@ async def follow(key: str, after: int = 0):
             # skip stale heartbeats when replaying a long backlog
             if ev.get("type") == "status" and ev.get("heartbeat") and i < len(job.events) - 1:
                 continue
-            yield f"id: {i}\ndata: {json.dumps(ev)}\n\n"
+            yield f"id: {job.tag}:{i}\ndata: {json.dumps(ev)}\n\n"
             if ev.get("type") == "end":
                 return
