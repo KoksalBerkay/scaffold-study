@@ -900,7 +900,14 @@ async def tutor_turn(cid: str, body: dict, review: bool | None = None, backgroun
 FEEDBACK_CUES = re.compile(
     r"\b(don'?t|do not|never|always|stop|instead|from now on|in general|prefer|i (like|love|hate|want|need)|"
     r"you (skipped|forgot|didn'?t|did not|should|need to|keep|are|were)|why (didn'?t|did|do) you|too (long|short|fast|slow|much|many|detailed|vague)|"
-    r"confus|boring|lost (my )?attention|explain (it )?(better|more|again)|not (clear|linear|helpful)|terrible|worse|hate|annoying)\b", re.I)
+    r"confus|boring|lost (my )?attention|explain (it )?(better|more|again)|not (clear|linear|helpful)|terrible|worse|hate|annoying|"
+    # explicit requests to remember something
+    r"remember|keep (that|this|it|in) in mind|(note|notice) (that|this)|take note|next time|in (the )?future|going forward|"
+    r"btw|by the way|i'?d (rather|prefer|like)|please (do|don'?t|stop|always|use|give|explain|tell)|"
+    r"you (can|could|may) (tell|give|do|combine|merge|group|skip|show|put|write|use)|"
+    # step size and pacing
+    r"tiny|(small|smaller|bigger|larger|big|fewer|more|whole|one) steps?|as one|together|at once|in one go|"
+    r"too (slow|easy|simple|small|big|hard)|so (slow|tiny|small)|slow(er)? down|faster|speed up)\b", re.I)
 
 
 def worth_notes(asst: dict) -> bool:
@@ -910,7 +917,8 @@ def worth_notes(asst: dict) -> bool:
 
 
 def worth_memory(reply: str) -> bool:
-    """The memory updater only matters when the student gives feedback or states a preference."""
+    """The memory updater only matters when the student gives feedback or states a preference. It is a cheap background
+    call, so the gate errs toward running: it only skips plain replies like "Okay done" or "Okay now what"."""
     return bool(FEEDBACK_CUES.search(reply or "")) or len(reply or "") > 220
 
 
@@ -937,9 +945,42 @@ def prev_tutor(cid: str) -> str:
 def memory_input(course: str | None, prev: str, reply: str) -> str:
     return (f"GENERAL MEMORY FILE:\n{get_memory()}\n\n"
             + (f"COURSE: {course}\nCOURSE MEMORY FILE:\n{get_course_memory(course)}\n\n" if course
-               else "COURSE: (this chat is not in a course folder; use scope general)\n\n")
+               else "COURSE: (this chat is not in a course folder; there is no course file, so leave \"course\" null)\n\n")
             + f"LATEST EXCHANGE:\nTUTOR (previous message): {prev[:5000]}"
             f"\n\nSTUDENT'S REPLY: {reply[:3000]}")
+
+
+def memory_updates(data: dict, course: str | None) -> dict[str, str]:
+    """The files the memory updater rewrote, as {"general"|"course": full new text}. New shape: a "general" and/or a
+    "course" key with the full file (null or missing = unchanged). Old shape: one "memory" plus "scope"."""
+    updates: dict[str, str] = {}
+    for key in ("general", "course"):
+        if isinstance(data.get(key), str) and data[key].strip():
+            updates[key] = data[key]
+    if not updates and isinstance(data.get("memory"), str) and data["memory"].strip():
+        updates["course" if course and data.get("scope") == "course" else "general"] = data["memory"]
+    if not course:
+        updates.pop("course", None)  # not a course chat: there is no course file to write
+    return updates
+
+
+def write_memory_files(course: str | None, updates: dict[str, str]) -> list[str]:
+    """Write each rewritten memory file with the per-file protections. Returns the keys actually changed on disk."""
+    from .rules import drop_repeated_bullets
+    written = []
+    for key, mem in updates.items():
+        if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", mem):
+            continue  # backslash trap: refuse corrupted text (only this file; the other one may still be fine)
+        target = course_memory_path(course) if key == "course" else memory_path()
+        old = target.read_text() if target.exists() else ""
+        # the model rewrites the whole file: drop new bullets that only reword one already there
+        mem, _dropped = drop_repeated_bullets(old, mem)
+        text = re.sub(r"\n{3,}", "\n\n", mem).strip() + "\n"
+        if text == old:
+            continue
+        write_atomic(target, text)
+        written.append(key)
+    return written
 
 
 async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
@@ -950,18 +991,16 @@ async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
         user = memory_input(course, prev, user_msg["content"])
         out = await llm.complete("background", render_prompt("memory_updater"), [{"role": "user", "content": user}])
         data = parse_json(out)
-        if data and data.get("changed") and data.get("memory"):
-            mem = data["memory"]
-            if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", mem):
-                return  # backslash trap: refuse corrupted text
-            to_course = course and data.get("scope") == "course"
-            target = course_memory_path(course) if to_course else memory_path()
-            # the model rewrites the whole file: drop new bullets that only reword one already there
-            from .rules import drop_repeated_bullets
-            mem, _dropped = drop_repeated_bullets(target.read_text() if target.exists() else "", mem)
-            write_atomic(target, re.sub(r"\n{3,}", "\n\n", mem).strip() + "\n")
+        if not (data and data.get("changed")):
+            return
+        written = write_memory_files(course, memory_updates(data, course))
+        if written:
             summary = data.get("change_summary") or "Memory updated"
-            broadcast({"type": "memory", "summary": f"{course}: {summary}" if to_course else summary, "chat": cid})
+            if written == ["course"]:
+                summary = f"{course}: {summary}"
+            elif len(written) == 2:
+                summary = f"General + {course}: {summary}"
+            broadcast({"type": "memory", "summary": summary, "chat": cid})
     except ChatGone:
         pass
     except Exception as e:

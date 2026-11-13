@@ -307,8 +307,9 @@ def M(name, prev, reply, expect_changed, expect_scope=None):
         changed = bool(d.get("changed"))
         if changed != expect_changed:
             return False, f"changed={changed} ({d.get('change_summary')})"
-        if expect_scope and d.get("scope") != expect_scope:
-            return False, f"scope={d.get('scope')} ({d.get('change_summary')})"
+        scopes = sorted(chat.memory_updates(d, COURSE))  # new shape (general/course keys) or old (scope + memory)
+        if expect_scope and scopes != [expect_scope]:
+            return False, f"files={scopes} ({d.get('change_summary')})"
         return True, d.get("change_summary") or "no change"
     return ("memory", name, run)
 
