@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowUp, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
+  ArrowUp, ArrowDown, Paperclip, X, ShieldCheck, ShieldAlert, ChevronDown, Loader2, Check, Image as ImageIcon,
   FileText, BookOpen, ClipboardPaste, CalendarCheck, Sparkles, Search, Library, FolderOpen, Square,
   CornerDownRight, Clock3, Layers, Terminal, NotebookPen, MessageSquareReply,
 } from 'lucide-react'
@@ -235,6 +235,7 @@ const MessageItem = memo(function MessageItem({ m, cards, chatId, planner, divid
 })
 
 const NO_CARDS = []
+const NEAR_BOTTOM = 48 // px from the bottom that still counts as "at the bottom"
 
 const MessageList = memo(function MessageList({ messages, cards, chatId, codex, planner, onCard }) {
   // notes cards by message, and Codex/Scaffold dividers, computed once per change (not per keystroke)
@@ -473,9 +474,55 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     return () => window.removeEventListener('scaffold:turn', h)
   }, [chatId]) // eslint-disable-line
 
+  // Follow new content only while the user is at (or near) the bottom. `stick` changes on the user's own scrolling:
+  // moving up away from the bottom stops following, reaching the bottom (or sending a message) resumes it.
+  // Programmatic scrolls only ever move down, so they are never mistaken for the user scrolling up.
+  const stick = useRef(true)
+  const lastTop = useRef(0)
+  const [showJump, setShowJump] = useState(false)
+  const distFromBottom = () => { const el = listRef.current; return el ? el.scrollHeight - el.scrollTop - el.clientHeight : 0 }
+  const scrollToBottom = useCallback((behavior = 'auto') => {
+    const el = listRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior })
+  }, [])
+  const followBottom = useCallback((behavior = 'smooth') => {
+    stick.current = true
+    setShowJump(false)
+    scrollToBottom(behavior)
+  }, [scrollToBottom])
+  const onListScroll = () => {
+    const el = listRef.current
+    if (!el) return
+    const near = distFromBottom() <= NEAR_BOTTOM
+    if (near) stick.current = true
+    else if (el.scrollTop < lastTop.current - 1) stick.current = false
+    lastTop.current = el.scrollTop
+    setShowJump(!near && !stick.current)
+  }
+  // a wheel turn upward stops following at once, even mid smooth-scroll
+  const onListWheel = (e) => { if (e.deltaY < 0 && distFromBottom() > NEAR_BOTTOM) { stick.current = false; setShowJump(true) } }
+
   useEffect(() => {
-    listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' })
-  }, [messages, busy])
+    if (stick.current) scrollToBottom('smooth')
+  }, [messages, busy, scrollToBottom])
+
+  // content that grows or shrinks after render (images, math, code, activity, notes cards, a taller input box):
+  // keep the bottom in view while following, otherwise just update the jump button
+  useEffect(() => {
+    const el = listRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(() => {
+      if (stick.current) { scrollToBottom('auto'); lastTop.current = el.scrollTop; setShowJump(false) }
+      else setShowJump(distFromBottom() > NEAR_BOTTOM)
+    })
+    ro.observe(el)
+    for (const c of el.children) ro.observe(c)
+    const mo = new MutationObserver((muts) => {
+      for (const m of muts) for (const n of m.addedNodes) if (n.nodeType === 1) ro.observe(n)
+    })
+    mo.observe(el, { childList: true })
+    return () => { ro.disconnect(); mo.disconnect() }
+  }, [missing, scrollToBottom])
 
   useEffect(() => {
     const ta = taRef.current
@@ -560,6 +607,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
     const cmd = body.match(/^\/(\w+)(?:\s+([\s\S]*))?$/)
     if (cmd && COMMANDS.some((c) => c.name === cmd[1].toLowerCase()) && a.length === 0) return runCommand(cmd[1].toLowerCase(), cmd[2] || '')
     if ((!body && a.length === 0) || a.some((x) => x.uploading)) return
+    followBottom()
     if (busy) {
       // the AI is still answering: queue it (Enter) or steer the current answer (⌘/Ctrl+Enter)
       setText(''); setAtts([])
@@ -592,6 +640,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
   const stop = async () => { try { await api(`/api/chats/${chatId}/stop`, { method: 'POST' }) } catch (e) { toast({ kind: 'error', text: e.message }) } }
   const unqueue = async (qid) => { const r = await api(`/api/chats/${chatId}/queue/${qid}`, { method: 'DELETE' }); setQueue(r.queue) }
   const sendQueuedNow = async (qid) => {
+    followBottom()
     const r = await api(`/api/chats/${chatId}/queue/${qid}/send`, { method: 'POST' })
     setQueue(r.queue || [])
     if (r.steered) setBusy((b) => (b ? { ...b, steering: 'your queued message' } : b))
@@ -604,6 +653,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
 
   const retry = async () => {
     setFailed(null)
+    followBottom()
     try {
       await api(`/api/chats/${chatId}/retry`, { method: 'POST' })
       track()
@@ -682,7 +732,7 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
         )}
       </header>
 
-      <div className="messages" ref={listRef}>
+      <div className="messages" ref={listRef} onScroll={onListScroll} onWheel={onListWheel}>
         {empty && (
           <div className="chat-empty">
             <h1>What are we studying?</h1>
@@ -718,6 +768,13 @@ export default function ChatView({ chatId, firstMessage, onConsumedFirst, onChan
       </div>
 
       <div className="composer-wrap">
+        {showJump && (
+          <button className={`jump-bottom ${busy ? 'is-busy' : ''}`} onClick={() => followBottom('smooth')}
+            aria-label={busy ? 'Scroll to the latest message (an answer is still coming)' : 'Scroll to the latest message'}
+            title={busy ? 'Jump to the bottom: the answer is still being written' : 'Jump to the bottom'}>
+            {busy ? <Loader2 size={16} className="spin" /> : <ArrowDown size={16} />}
+          </button>
+        )}
         {chat?.kind === 'planner' && settings && (
           <MaterialsBar settings={settings} needFolder={needFolder} busy={!!busy}
             onChosen={async (s2, msg) => { setSettings(s2); send(msg, []) }} />

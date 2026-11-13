@@ -807,6 +807,13 @@ a.btn { text-decoration: none; }
 .send.stop { background: var(--text); color: var(--bg); }
 .steer-btn { height: 34px; padding: 0 12px; border-radius: 11px; border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); background: var(--accent-soft); color: var(--accent); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; }
 .steer-btn:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+/* round "jump to latest" button, floating just above the input box in the composer's fade-in strip */
+.jump-bottom { position: absolute; left: 50%; top: -16px; transform: translateX(-50%); z-index: 1; width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid var(--border-strong); background: var(--panel); color: var(--text-2); display: grid; place-items: center; padding: 0;
+  box-shadow: 0 6px 18px rgba(0,0,0,.28); transition: background .12s, color .12s, border-color .12s; }
+.jump-bottom:hover { background: var(--panel-2); color: var(--text); border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong)); }
+.jump-bottom.is-busy { color: var(--accent); }
+[data-theme='light'] .jump-bottom { box-shadow: 0 6px 16px rgba(20,24,40,.12); }
 
 /* queued messages, shown inside the composer */
 .queue { display: flex; flex-direction: column; gap: 4px; margin: -4px 0 10px -6px; padding-bottom: 10px; border-bottom: 1px dashed var(--border); }
