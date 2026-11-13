@@ -955,7 +955,11 @@ async def memory_job(cid: str, user_msg: dict, asst: dict, prev: str):
             if re.search(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", mem):
                 return  # backslash trap: refuse corrupted text
             to_course = course and data.get("scope") == "course"
-            write_atomic(course_memory_path(course) if to_course else memory_path(), mem.strip() + "\n")
+            target = course_memory_path(course) if to_course else memory_path()
+            # the model rewrites the whole file: drop new bullets that only reword one already there
+            from .rules import drop_repeated_bullets
+            mem, _dropped = drop_repeated_bullets(target.read_text() if target.exists() else "", mem)
+            write_atomic(target, re.sub(r"\n{3,}", "\n\n", mem).strip() + "\n")
             summary = data.get("change_summary") or "Memory updated"
             broadcast({"type": "memory", "summary": f"{course}: {summary}" if to_course else summary, "chat": cid})
     except ChatGone:

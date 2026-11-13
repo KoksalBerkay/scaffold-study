@@ -162,6 +162,46 @@ def reviewer_material(steps: list[dict], info: dict | None = None, since: float 
     return "\n\n".join(out)
 
 
+def files_in_command(cmd: str, root: Path) -> list[str]:
+    """Project files a shell command names (`sed -n 40,70p src/A.java`, `cd lab3 && cat B.java`), relative to root."""
+    bases = [root] + [(root / d.strip("'\"")).resolve() for d in re.findall(r"\bcd\s+([^\s;&|]+)", cmd)]
+    out: list[str] = []
+    for tok in re.findall(r"[^\s'\"`;&|<>()=,]+", cmd):
+        if "." not in tok and "/" not in tok:
+            continue
+        for base in bases:
+            try:
+                p = (base / Path(tok).expanduser()).resolve()
+            except (OSError, ValueError, RuntimeError):
+                continue
+            if root in p.parents and p.is_file():
+                out.append(str(p.relative_to(root)))
+                break
+    return out
+
+
+def tutor_files(steps: list[dict], cwd: str | None) -> dict:
+    """Which project files the Tutor edited and read in this answer (paths relative to the project folder)."""
+    edited: list[str] = []
+    read: list[str] = []
+    if not cwd or not Path(cwd).is_dir():
+        return {"edited": edited, "read": read}
+    root = Path(cwd).resolve()
+    for st in steps:
+        if st["kind"] == "edit" and st.get("applied"):
+            for e in st["edits"]:
+                try:
+                    p = Path(e["path"]).resolve()
+                except (OSError, ValueError, RuntimeError):
+                    continue
+                if root in p.parents and e.get("kind") != "delete":
+                    edited.append(str(p.relative_to(root)))
+        elif st["kind"] == "command":
+            read += files_in_command(st.get("command") or st["text"].removeprefix("$ "), root)
+    edited = list(dict.fromkeys(edited))[:20]
+    return {"edited": edited, "read": [p for p in dict.fromkeys(read) if p not in edited][:20]}
+
+
 def _memory_block(meta: dict, course: str | None) -> tuple[str, str]:
     mem = get_memory(course)
     h = hashlib.sha1(mem.encode()).hexdigest()[:12]
@@ -240,7 +280,7 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
                     continue
                 if val["kind"] == "output":
                     steps.append({"n": len(steps) + 1, "round": round_label[0], "kind": "command", "text": val["text"],
-                                  "output": val.get("output")})
+                                  "command": val.get("command") or "", "output": val.get("output")})
                     continue
                 if val["kind"] == "edit":
                     steps.append({"n": len(steps) + 1, "round": round_label[0], "kind": "edit",
@@ -287,6 +327,9 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
             "activity": activity, "seconds": round(time.time() - t0), "via": "codex",
             "compacted": any(a["kind"] == "compact" for a in activity), "plan_link": planner or None,
             "usage": llm.usage_summary(usage)}
+    touched = tutor_files(steps, info.get("cwd"))
+    if touched["edited"] or touched["read"]:
+        asst["tutor_files"] = touched  # the Notes agent reads these from the project when it writes about this answer
     append_message(cid, asst)
     yield {"type": "message", "message": asst}
     broadcast({"type": "chats"})

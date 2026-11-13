@@ -291,7 +291,7 @@ async def run_turn_via_queue(info: dict, prompt: str, images: list[str], model: 
             elif it["item_type"] == "commandExecution":
                 yield ("event", {"kind": "tool", "text": f"Ran `{_short_cmd(data.get('command', ''))}`"})
                 yield ("event", {"kind": "output", "text": f"$ {_short_cmd(data.get('command', ''))}",
-                                 "output": (data.get("aggregatedOutput") or "")[:4000]})
+                                 "command": data.get("command") or "", "output": (data.get("aggregatedOutput") or "")[:4000]})
             elif it["item_type"] == "agentMessage" and data.get("phase") == "commentary":
                 yield ("event", {"kind": "commentary", "text": data.get("text", "")})
             elif it["item_type"] == "contextCompaction":
@@ -438,7 +438,7 @@ async def run_turn(info: dict, prompt: str, images: list[str], model: str | None
             elif kind == "item.completed" and itype == "command_execution":
                 # what the command returned: the Reviewer must see what Codex saw
                 yield ("event", {"kind": "output", "text": f"$ {_short_cmd(item.get('command', ''))}",
-                                 "output": (item.get("aggregated_output") or "")[:4000]})
+                                 "command": item.get("command") or "", "output": (item.get("aggregated_output") or "")[:4000]})
             elif itype and "compact" in itype and kind == "item.completed":
                 yield ("event", {"kind": "compaction", "text": "Context compacted: Codex summarized the older part of this chat to make room"})
             elif kind == "item.completed" and itype == "reasoning":

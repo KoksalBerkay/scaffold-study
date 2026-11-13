@@ -217,7 +217,7 @@ def notes_setup():
 def N(name, message, check, files=("Linear Algebra/Eigenvalues - Foundations.md",)):
     async def run():
         notes_setup()
-        out = await notesagent._agent_turn(COURSE, COURSE, message, [], list(files))
+        out, _ = await notesagent._agent_turn(COURSE, COURSE, message, [], list(files))
         changes, rules, summary = notesagent.plan_changes(out, COURSE)
         return await check(changes, rules, summary, out)
     return ("notes", name, run)
