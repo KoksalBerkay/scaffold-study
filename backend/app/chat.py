@@ -677,9 +677,11 @@ def review_input(user_msg: dict, prior: list[dict], material_used: str, draft: s
             + f"\n\nTUTOR'S DRAFT:\n{draft}")
 
 
-async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_used: str, images: list[str],
+async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_used, images: list[str],
                       course: str | None, settings: dict, act, revise, review: dict):
     """Reviewer ⇄ author rounds. `revise(feedback, n)` yields events and finally ("result", new_draft).
+    `material_used` is a string, or a function that builds it, called again before every round (so a revision's
+    tool results and file edits reach the Reviewer).
     Yields events, and ("draft", text) whenever the draft changes. Fills `review` in place."""
     if not settings.get("review"):
         yield act("approved", "Review is off: showing the draft")
@@ -689,7 +691,8 @@ async def review_loop(draft: str, user_msg: dict, prior: list[dict], material_us
     for r in range(max_rounds + 1):
         draft = normalize_math(draft)  # Scaffold fixes math delimiters itself: never spend a review round on them
         yield act("review", f"Reviewer is checking the draft ({_model_name('reviewer')})" if r == 0 else "Reviewer is checking the revision")
-        rin = review_input(user_msg, prior, material_used, draft, review["rounds"])
+        material = await asyncio.to_thread(material_used) if callable(material_used) else material_used
+        rin = review_input(user_msg, prior, material, draft, review["rounds"])
         verdict = None
         try:
             async for ev in with_heartbeat(llm.complete("reviewer", rsys, [{"role": "user", "content": rin, "images": images}]),

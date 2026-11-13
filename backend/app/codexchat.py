@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import time
+from pathlib import Path
 
 from fastapi import Body, HTTPException
 
@@ -31,6 +33,7 @@ REVIEW_HEADER = ("[Scaffold Reviewer] The student has not seen your last reply y
                  "Reply with the complete corrected message for the student only, without mentioning this review. "
                  "Do not write or edit any note files (Scaffold's Notes agent does that):\n")
 _background: set[asyncio.Task] = set()
+FILES_CAP = 8000  # of the Reviewer's 14000-character material: what edited files contain now
 
 
 def display_messages(cid: str, meta: dict) -> list[dict]:
@@ -57,6 +60,106 @@ def context_of(meta: dict) -> dict | None:
         info = codexlink.thread_info(meta["codex"]["thread"])
         return codexlink.context_usage(info) if info else None
     return meta.get("context")
+
+
+def _numbered(lines: list[str], idx) -> str:
+    return "\n".join(f"{i + 1:>5}  {lines[i]}" for i in idx)
+
+
+def _changed_lines(diffs: list[str]) -> list[int]:
+    """Line numbers (in the new file) of the regions the diffs touched."""
+    out = []
+    for d in diffs:
+        for m in re.finditer(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@", d, re.M):
+            start, n = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+            out += list(range(start, start + max(n, 1)))
+    return out
+
+
+def _current_file(path: str, diffs: list[str], cap: int) -> str:
+    """What the file contains on disk now, with line numbers: all of it, or around the edits if it is long."""
+    p = Path(path)
+    if not p.exists():
+        return "(This file does not exist now: it was deleted or moved.)"
+    try:
+        raw = p.read_bytes()
+    except OSError as e:
+        return f"(Scaffold could not read this file: {e.strerror or e})"
+    if b"\0" in raw[:8192]:
+        return "(Binary file: content not shown.)"
+    lines = raw.decode(errors="replace").splitlines()
+    full = _numbered(lines, range(len(lines)))
+    if len(full) <= cap:
+        return full or "(The file is empty.)"
+    near = sorted({i for c in _changed_lines(diffs) for i in range(c - 9, c + 8) if 0 <= i < len(lines)})
+    if not near:
+        return full[:cap] + "\n… (long file: only the start is shown)"
+    parts, run = [], [near[0]]
+    for i in near[1:]:
+        if i == run[-1] + 1:
+            run.append(i)
+        else:
+            parts.append(run)
+            run = [i]
+    parts.append(run)
+    text = "(Long file: showing the edited regions as they are now.)\n" + "\n   …\n".join(_numbered(lines, r) for r in parts)
+    return text if len(text) <= cap else text[:cap] + "\n…"
+
+
+def reviewer_material(steps: list[dict], info: dict | None = None, since: float = 0) -> str:
+    """What the Reviewer is told about the Tutor's tool use, rebuilt before every review round: the current content
+    of every file the Tutor edited (read from disk now), then each step newest first, saying which outputs predate
+    an edit. Ordered so that what matters most survives the Reviewer's size limit."""
+    if not steps:
+        return "The Tutor answered without running any tools."
+    edited: dict[str, list[int]] = {}  # path -> steps that edited it
+    for st in steps:
+        if st["kind"] == "edit" and st.get("applied"):
+            for e in st["edits"]:
+                edited.setdefault(e["path"], []).append(st["n"])
+    out = ["The Tutor (Codex) used normal tools in the student's project. Steps are numbered in the order they "
+           "happened (step 1 came first). The Tutor's file edits are real and already saved to disk."]
+    if edited:
+        diffs = {p: [e["diff"] for st in steps if st["kind"] == "edit" for e in st["edits"] if e["path"] == p and e["diff"]]
+                 for p in edited}
+        cap = max(1500, FILES_CAP // len(edited))
+        if info and any(not diffs[p] for p in edited) and any(Path(p).exists() and Path(p).stat().st_size > cap for p in edited):
+            for p, ds in codexlink.turn_diffs(info, since).items():
+                if p in diffs and not diffs[p]:
+                    diffs[p] = ds
+        out.append("CURRENT CONTENT OF THE FILES THE TUTOR EDITED (read from disk by Scaffold just now, after all the "
+                   "Tutor's steps: this is what the files contain now):")
+        used = 0
+        for p in sorted(edited, key=lambda p: -edited[p][-1]):  # most recently edited first
+            head = f"### {p} (edited in step {', '.join(map(str, edited[p]))})"
+            if used >= FILES_CAP:
+                out.append(head + "\n(Not shown: size limit.)")
+                continue
+            block = f"{head}\n{_current_file(p, diffs[p], min(cap, FILES_CAP - used))}"
+            used += len(block)
+            out.append(block)
+        out.append("STEPS, NEWEST FIRST:")
+    for st in reversed(steps):
+        head = f"Step {st['n']} ({st['round']})"
+        if st["kind"] == "edit":
+            names = ", ".join(e["path"] for e in st["edits"]) or "a file"
+            if not st.get("applied"):
+                out.append(f"{head}: the Tutor tried to edit {names}, but the edit failed and was not applied.")
+                continue
+            verb = "deleted" if all(e["kind"] == "delete" for e in st["edits"]) else "edited"
+            body = (f"{head}: the Tutor {verb} {names}. The edit is saved"
+                    + ("." if verb == "deleted" else "; the file's current content is shown above."))
+            ds = "\n".join(e["diff"] for e in st["edits"] if e["diff"])
+            if ds:
+                body += "\nWhat this edit changed:\n" + (ds if len(ds) <= 1500 else ds[:1500] + "\n…")
+            out.append(body)
+        else:
+            later = sorted({Path(p).name for p, ns in edited.items() if any(n > st["n"] for n in ns)
+                            and Path(p).name in st["text"]})
+            note = (f"\n(OLDER OUTPUT: {', '.join(later)} was edited after this command, so this shows the file as it was "
+                    "BEFORE that edit, not its current content.)") if later else ""
+            out.append(f"{head}: {st['text']}{note}\n{st.get('output') or '(no output)'}")
+    return "\n\n".join(out)
 
 
 def _memory_block(meta: dict, course: str | None) -> tuple[str, str]:
@@ -124,7 +227,8 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
     yield {"type": "status", "stage": "drafting", "detail": f"Codex is working in your chat ({label})"}
     yield act("draft", f"Sending to your Codex chat ({label})")
 
-    tool_outputs: list[str] = []
+    steps: list[dict] = []  # commands and edits, in order, for the Reviewer
+    round_label = ["first draft"]
 
     async def run(prompt_text: str, stage: str, imgs: list[str]):
         detail = "Codex is working"
@@ -135,8 +239,12 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
                 if val["kind"] == "thinking":
                     continue
                 if val["kind"] == "output":
-                    tool_outputs.append(f"{val['text']}\n{val.get('output') or '(no output)'}")
+                    steps.append({"n": len(steps) + 1, "round": round_label[0], "kind": "command", "text": val["text"],
+                                  "output": val.get("output")})
                     continue
+                if val["kind"] == "edit":
+                    steps.append({"n": len(steps) + 1, "round": round_label[0], "kind": "edit",
+                                  "edits": val.get("edits") or [], "applied": val.get("applied", True)})
                 detail = val["text"][:160]
                 yield {"type": "status", "stage": stage, "detail": detail}
                 yield act("compact" if val["kind"] == "compaction" else "tool", val["text"])
@@ -157,14 +265,17 @@ async def codex_turn(cid: str, body: dict, retry: bool = False, **_):
 
     review = {"enabled": bool(settings.get("review")) and not planner, "rounds": [], "student_note": ""}
     if not planner:
+        revisions = [0]
+
         async def revise(fb: str, n: int):
+            revisions[0] += 1
+            round_label[0] = f"revision {revisions[0]}"
             async for ev in run(REVIEW_HEADER + fb, "revising", []):
                 yield ev
 
-        # newest results first, so the most relevant output survives the size limit
-        material = ("The Tutor (Codex) used normal tools in the student's project. These are the exact commands and "
-                    "what they returned: the Tutor saw all of this.\n\n" + "\n\n".join(reversed(tool_outputs))
-                    if tool_outputs else "The Tutor answered without running any tools.")
+        # rebuilt before every review round: it includes the revisions' steps and reads edited files as they are now
+        def material() -> str:
+            return reviewer_material(steps, info, t0)
         async for ev in review_loop(draft, user_msg, prior, material, review_images, course, settings, act, revise, review):
             if isinstance(ev, tuple):
                 draft = ev[1]

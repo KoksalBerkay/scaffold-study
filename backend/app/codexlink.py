@@ -278,12 +278,17 @@ async def run_turn_via_queue(info: dict, prompt: str, images: list[str], model: 
         for it in items:
             if it["item_id"] in seen:
                 continue
-            seen.add(it["item_id"])
             try:
                 data = json.loads(it["item_json"])
             except Exception:
+                seen.add(it["item_id"])
                 continue
-            if it["item_type"] == "commandExecution":
+            if it["item_type"] == "fileChange" and data.get("status") == "inProgress":
+                continue  # report the edit once it is applied (or failed)
+            seen.add(it["item_id"])
+            if it["item_type"] == "fileChange":
+                yield ("event", edit_event(data.get("changes") or [], data.get("status"), info.get("cwd")))
+            elif it["item_type"] == "commandExecution":
                 yield ("event", {"kind": "tool", "text": f"Ran `{_short_cmd(data.get('command', ''))}`"})
                 yield ("event", {"kind": "output", "text": f"$ {_short_cmd(data.get('command', ''))}",
                                  "output": (data.get("aggregatedOutput") or "")[:4000]})
@@ -306,10 +311,58 @@ async def run_turn_via_queue(info: dict, prompt: str, images: list[str], model: 
 
 ACTIVITY = {
     "command_execution": lambda it: f"Ran `{_short_cmd(it.get('command', ''))}`",
-    "file_change": lambda it: "Edited " + ", ".join(Path(c.get("path", "")).name for c in it.get("changes") or []) or "Edited a file",
     "web_search": lambda it: f"Searched the web: {it.get('query', '')}",
     "mcp_tool_call": lambda it: f"Used {it.get('server', '')} · {it.get('tool', '')}",
 }
+
+
+def edit_event(changes: list, status: str | None, cwd: str | None) -> dict:
+    """A file edit Codex made, for the activity log and the Reviewer: absolute paths, and the diff when Codex gives
+    one (the Codex app's history has it; `codex exec --json` gives only the path and kind)."""
+    edits = []
+    for c in changes:
+        if not isinstance(c, dict) or not c.get("path"):
+            continue
+        kind = c.get("kind")
+        moved = kind.get("move_path") if isinstance(kind, dict) else None
+        kind = kind.get("type") if isinstance(kind, dict) else kind
+        path = Path(moved or c["path"]).expanduser()
+        if not path.is_absolute():
+            path = Path(cwd or Path.home()) / path
+        edits.append({"path": str(path), "kind": kind or "update", "diff": c.get("diff") or c.get("unified_diff") or "",
+                      **({"moved_from": c["path"]} if moved else {})})
+    names = ", ".join(Path(e["path"]).name for e in edits) or "a file"
+    ok = status in (None, "completed")
+    return {"kind": "edit", "text": ("Edited " if ok else "Tried to edit ") + names + ("" if ok else f" ({status})"),
+            "edits": edits, "applied": ok}
+
+
+def turn_diffs(info: dict, since: float) -> dict[str, list[str]]:
+    """The diffs of file edits Codex recorded in the thread's rollout file since `since` (a timestamp), by absolute
+    path, oldest first. Used when the live events did not carry them."""
+    p = Path(info.get("rollout_path") or "")
+    out: dict[str, list[str]] = {}
+    try:
+        with open(p, "rb") as f:
+            f.seek(max(0, p.stat().st_size - 3_000_000))
+            tail = f.read().decode(errors="replace")
+    except OSError:
+        return out
+    for line in tail.splitlines():
+        if '"FileChange"' not in line:
+            continue
+        try:
+            pl = json.loads(line).get("payload") or {}
+        except Exception:
+            continue
+        item = pl.get("item") or {}
+        if item.get("type") != "FileChange" or (pl.get("completed_at_ms") or 0) < since * 1000:
+            continue
+        changes = item.get("changes") or {}
+        for path, ch in (changes.items() if isinstance(changes, dict) else []):
+            if isinstance(ch, dict) and ch.get("unified_diff"):
+                out.setdefault(str(Path(ch.get("move_path") or path)), []).append(ch["unified_diff"])
+    return out
 
 
 def _short_cmd(cmd: str) -> str:
@@ -380,10 +433,8 @@ async def run_turn(info: dict, prompt: str, images: list[str], model: str | None
                 messages.append(item.get("text") or "")
             elif kind == "item.started" and itype in ACTIVITY:
                 yield ("event", {"kind": "tool", "text": ACTIVITY[itype](item)})
-            elif kind == "item.completed" and itype == "file_change":
-                yield ("event", {"kind": "tool", "text": ACTIVITY["file_change"](item)})
-                yield ("event", {"kind": "output", "text": ACTIVITY["file_change"](item),
-                                 "output": json.dumps(item.get("changes") or [])[:3000]})
+            elif kind == "item.completed" and itype == "file_change":  # shown once, when it is applied
+                yield ("event", edit_event(item.get("changes") or [], item.get("status"), cwd))
             elif kind == "item.completed" and itype == "command_execution":
                 # what the command returned: the Reviewer must see what Codex saw
                 yield ("event", {"kind": "output", "text": f"$ {_short_cmd(item.get('command', ''))}",
